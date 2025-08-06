@@ -11,7 +11,7 @@ from config import GITHUB_PAT_DOCS
 
 class RepoDetails:
     GITHUB_TOKEN = GITHUB_PAT_DOCS
-    OWNER = "Rocked03"
+    OWNER = "Marvel-Discord"
     REPO = "marvel-discord-docs"
     BRANCH = "main"
 
