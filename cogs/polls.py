@@ -551,7 +551,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         embed.set_author(
             name="🔗 View in browser",
-            url=f"https://polls.marvelcord.com/?type=id&search=id%3A+{poll['id']}",
+            url=f"https://polls.marvelcord.com/?type=id&search={poll['id']}",
         )
 
         embed.description = poll["description"]
@@ -650,7 +650,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         embed.set_author(
             name="🔗 View in browser",
-            url=f"https://polls.marvelcord.com/?type=id&search=id%3A+{poll['id']}",
+            url=f"https://polls.marvelcord.com/?type=id&search={poll['id']}",
         )
 
         if poll["show_question"]:
@@ -787,7 +787,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         embed.set_author(
             name="🔗 View in browser",
-            url=f"https://polls.marvelcord.com/?type=id&search=id%3A+{poll['id']}",
+            url=f"https://polls.marvelcord.com/?type=id&search={poll['id']}",
         )
 
         if poll["show_question"]:
