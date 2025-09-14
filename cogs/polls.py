@@ -7,6 +7,7 @@ import random
 import re
 import traceback
 
+from contextlib import asynccontextmanager
 from discord import *
 from discord.app_commands import *
 from discord.app_commands.tree import _log
@@ -179,6 +180,13 @@ class PollsCog(commands.Cog, name="Polls"):
 
         self.bot.loop.create_task(self.on_startup_scheduler())
 
+        # Add listener setup
+        self.listener_connection = None
+        self.listening = False
+
+        # Start the listener
+        self.bot.loop.create_task(self.setup_poll_listener())
+
     findchoice = lambda self, choices, x: [i for i in choices if i.value == x][0]
 
     choices = {}
@@ -256,21 +264,23 @@ class PollsCog(commands.Cog, name="Polls"):
         return x + y
 
     async def searchpollsbyid(self, poll_id, showunpublished=False):
-        if showunpublished:
-            return await self.bot.db.fetch(
-                "SELECT * FROM polls WHERE CAST(id AS TEXT) LIKE $1", f"{poll_id}%"
-            )
-        else:
-            return await self.bot.db.fetch(
-                "SELECT * FROM polls WHERE CAST(id AS TEXT) LIKE $1 AND published = true",
-                f"{poll_id}%",
-            )
+        async with self.acquire_bot_conn() as conn:
+            if showunpublished:
+                return await conn.fetch(
+                    "SELECT * FROM polls WHERE CAST(id AS TEXT) LIKE $1", f"{poll_id}%"
+                )
+            else:
+                return await conn.fetch(
+                    "SELECT * FROM polls WHERE CAST(id AS TEXT) LIKE $1 AND published = true",
+                    f"{poll_id}%",
+                )
 
     async def searchpollsbykeyword(self, keyword, showunpublished=False):
-        # if showunpublished:
-        # 	return await self.bot.db.fetch("SELECT * FROM polls WHERE question ~* $1", keyword)
-        # else:
-        # 	return await self.bot.db.fetch("SELECT * FROM polls WHERE question ~* $1 AND published = true", keyword)
+        # async with self.acquire_bot_conn() as conn:
+        #     if showunpublished:
+        #         return await conn.fetch("SELECT * FROM polls WHERE question ~* $1", keyword)
+        #     else:
+        #         return await conn.fetch("SELECT * FROM polls WHERE question ~* $1 AND published = true", keyword)
         results = await self.fetchallpolls(showunpublished)
 
         return self.keywordsearch(keyword, results)
@@ -292,23 +302,25 @@ class PollsCog(commands.Cog, name="Polls"):
         ]
 
     async def fetchallpolls(self, showunpublished=False):
-        if showunpublished:
-            return await self.bot.db.fetch(
-                "SELECT * FROM (polls LEFT JOIN pollsinfo ON polls.guild_id = pollsinfo.guild_id) LEFT JOIN pollstags ON polls.tag = pollstags.tag"
-            )
-        else:
-            return await self.bot.db.fetch(
-                "SELECT * FROM (polls LEFT JOIN pollsinfo ON polls.guild_id = pollsinfo.guild_id) LEFT JOIN pollstags ON polls.tag = pollstags.tag "
-                "WHERE published = true"
-            )
+        async with self.acquire_bot_conn() as conn:
+            if showunpublished:
+                return await conn.fetch(
+                    "SELECT * FROM (polls LEFT JOIN pollsinfo ON polls.guild_id = pollsinfo.guild_id) LEFT JOIN pollstags ON polls.tag = pollstags.tag"
+                )
+            else:
+                return await conn.fetch(
+                    "SELECT * FROM (polls LEFT JOIN pollsinfo ON polls.guild_id = pollsinfo.guild_id) LEFT JOIN pollstags ON polls.tag = pollstags.tag "
+                    "WHERE published = true"
+                )
 
     async def fetchpoll(self, poll_id: int):
-        return await self.bot.db.fetchrow(
-            "SELECT * FROM "
-            "polls NATURAL LEFT JOIN pollsinfo NATURAL LEFT JOIN pollstags "
-            "WHERE polls.id = $1",
-            poll_id,
-        )
+        async with self.acquire_bot_conn() as conn:
+            return await conn.fetchrow(
+                "SELECT * FROM "
+                "polls NATURAL LEFT JOIN pollsinfo NATURAL LEFT JOIN pollstags "
+                "WHERE polls.id = $1",
+                poll_id,
+            )
 
     async def fetchpollmsg(self, poll):
         return await self.bot.get_channel(
@@ -316,29 +328,32 @@ class PollsCog(commands.Cog, name="Polls"):
         ).fetch_message(poll["message_id"])
 
     async def fetchguildinfo(self, guildid: int):
-        return await self.bot.db.fetchrow(
-            "SELECT * FROM pollsinfo WHERE guild_id = $1", guildid
-        )
+        async with self.acquire_bot_conn() as conn:
+            return await conn.fetchrow(
+                "SELECT * FROM pollsinfo WHERE guild_id = $1", guildid
+            )
 
     async def fetchguildinfobymanagechannel(self, channelid: int):
-        return await self.bot.db.fetchrow(
-            "SELECT * FROM pollsinfo WHERE manage_channel_id && $1", [channelid]
-        )
+        async with self.acquire_bot_conn() as conn:
+            return await conn.fetchrow(
+                "SELECT * FROM pollsinfo WHERE manage_channel_id && $1", [channelid]
+            )
 
     async def fetchtag(self, tagid: int):
-        return (
-            await self.bot.db.fetchrow("SELECT * FROM pollstags WHERE tag = $1", tagid)
-            if tagid
-            else None
-        )
+        async with self.acquire_bot_conn() as conn:
+            return (
+                await conn.fetchrow("SELECT * FROM pollstags WHERE tag = $1", tagid)
+                if tagid
+                else None
+            )
 
     async def fetchtagsbyguildid(self, guildid: int):
-        return await self.bot.db.fetch(
-            "SELECT * FROM pollstags WHERE guild_id = $1", guildid
-        )
+        async with self.acquire_bot_conn() as conn:
+            return conn.fetch("SELECT * FROM pollstags WHERE guild_id = $1", guildid)
 
     async def fetchalltags(self):
-        return await self.bot.db.fetch("SELECT * FROM pollstags")
+        async with self.acquire_bot_conn() as conn:
+            return await conn.fetch("SELECT * FROM pollstags")
 
     async def tagname(self, tagid: int):
         return (await self.fetchtag(tagid))["name"]
@@ -385,17 +400,19 @@ class PollsCog(commands.Cog, name="Polls"):
         )
 
     async def hasmanagerpermsbyuserandids(self, user, guild_id, channel_id=None):
-        guild = await self.bot.db.fetchrow(
-            "SELECT * FROM pollsinfo WHERE guild_id = $1", guild_id
-        )
-        if not guild:
-            return []
-        if channel_id:
-            manage_channels = await self.bot.db.fetch(
-                "SELECT * FROM pollsinfo WHERE manage_channel_id && $1", [channel_id]
+        async with self.acquire_bot_conn() as conn:
+            guild = await conn.fetchrow(
+                "SELECT * FROM pollsinfo WHERE guild_id = $1", guild_id
             )
-        else:
-            manage_channels = []
+            if not guild:
+                return []
+            if channel_id:
+                manage_channels = await conn.fetch(
+                    "SELECT * FROM pollsinfo WHERE manage_channel_id && $1",
+                    [channel_id],
+                )
+            else:
+                manage_channels = []
 
         guilds = []
 
@@ -450,74 +467,74 @@ class PollsCog(commands.Cog, name="Polls"):
     @commands.command()
     @commands.is_owner()
     async def pools(self, ctx):
+        async with self.acquire_bot_conn() as conn:
+            # await conn.execute("INSERT INTO polls VALUES (1, null, null, null, 'test q', 'thread q', ARRAY ['a1', 'a2', 'a3'], 'comic', ARRAY [0, 0, 0])")
+            # await conn.execute("INSERT INTO polls (id) VALUES (2)")
+            #
+            # await conn.execute("DELETE FROM polls WHERE id=1")
+            #
+            # a = await conn.fetchrow("SELECT id FROM polls")
+            # print(type(a))
+            # print(a['id'])
+            #
+            # print(bool(await conn.fetchrow("SELECT id FROM polls WHERE id = $1", 88375)))
+            #
+            # await conn.execute(f"UPDATE polls SET time = $1, duration = $2 WHERE id = $3", discord.utils.utcnow(), datetime.timedelta(seconds=100), 63830)
+            #
+            # a = await conn.fetchrow("SELECT * FROM polls WHERE id = $1", 63830)
+            # print(type(a['time']), a['time'])
+            # print(type(a['duration']), a['duration'])
+            #
+            # await self.schedule_starts()
+            #
+            # await ctx.send(embed = await self.pollinfoembed(await self.fetchpoll(60320)), view = await self.pollbuttons(60320))
+            #
+            # await self.vote({'id': 88071}, ctx.author, 1)
+            #
+            # url = "https://i.imgur.com/4Iz84pD.png"
+            # async with aiohttp.ClientSession() as s:
+            #     async with s.get(url) as r:
+            #         f = discord.File(io.BytesIO(await r.read()), filename = "image.png", description = "test")
+            #
+            # e = discord.Embed(colour = 0x2f3136)
+            # e.set_image(url="attachment://image.png")
+            # # await ctx.send(file=f, embed=e)
+            # await ctx.send(file=f)
+            #
+            # votes = await conn.fetch("SELECT * FROM pollsvotes")
+            #
+            # for user in votes:
+            #     user_id = user['user_id']
+            #     for p, v in user.items():
+            #         if p == 'user_id':
+            #             continue
+            #         if v is not None:
+            #             await conn.execute(
+            #                 "INSERT INTO pollsvotesnew (id, user_id, poll_id, choice) VALUES ($1, $2, $3, $4)",
+            #                 user_id + int(p), user_id, int(p), v)
+            #             print(user_id, p, v)
+            #
+            # print((await conn.fetch("SELECT * FROM pollsvotesnew"))[0])
 
-        # await self.bot.db.execute("INSERT INTO polls VALUES (1, null, null, null, 'test q', 'thread q', ARRAY ['a1', 'a2', 'a3'], 'comic', ARRAY [0, 0, 0])")
-        # await self.bot.db.execute("INSERT INTO polls (id) VALUES (2)")
-
-        # await self.bot.db.execute("DELETE FROM polls WHERE id=1")
-
-        # a = await self.bot.db.fetchrow("SELECT id FROM polls")
-        # print(type(a))
-        # print(a['id'])
-
-        # print(bool(await self.bot.db.fetchrow("SELECT id FROM polls WHERE id = $1", 88375)))
-
-        # await self.bot.db.execute(f"UPDATE polls SET time = $1, duration = $2 WHERE id = $3", discord.utils.utcnow(), datetime.timedelta(seconds=100), 63830)
-
-        # a = await self.bot.db.fetchrow("SELECT * FROM polls WHERE id = $1", 63830)
-        # print(type(a['time']), a['time'])
-        # print(type(a['duration']), a['duration'])
-
-        # await self.schedule_starts()
-
-        # await ctx.send(embed = await self.pollinfoembed(await self.fetchpoll(60320)), view = await self.pollbuttons(60320))
-
-        # await self.vote({'id': 88071}, ctx.author, 1)
-
-        # url = "https://i.imgur.com/4Iz84pD.png"
-        # async with aiohttp.ClientSession() as s:
-        # 	async with s.get(url) as r:
-        # 		f = discord.File(io.BytesIO(await r.read()), filename = "image.png", description = "test")
-
-        # e = discord.Embed(colour = 0x2f3136)
-        # e.set_image(url="attachment://image.png")
-        # # await ctx.send(file=f, embed=e)
-        # await ctx.send(file=f)
-
-        # votes = await self.bot.db.fetch("SELECT * FROM pollsvotes")
-        #
-        # for user in votes:
-        #     user_id = user['user_id']
-        #     for p, v in user.items():
-        #         if p == 'user_id':
-        #             continue
-        #         if v is not None:
-        #             await self.bot.db.execute(
-        #                 "INSERT INTO pollsvotesnew (id, user_id, poll_id, choice) VALUES ($1, $2, $3, $4)",
-        #                 user_id + int(p), user_id, int(p), v)
-        #             print(user_id, p, v)
-
-        # print((await self.bot.db.fetch("SELECT * FROM pollsvotesnew"))[0])
-
-        polls = await self.bot.db.fetch(
-            "SELECT * FROM (polls LEFT JOIN pollsinfo ON polls.guild_id = pollsinfo.guild_id) LEFT JOIN pollstags ON polls.tag = pollstags.tag "
-            "WHERE time < TO_TIMESTAMP(1684627200)"
-            "ORDER BY time ASC"
-        )
-
-        channel = self.bot.get_channel(1214133803107491840)
-
-        for poll in polls:
-            msg_content = await self.formatpollmessage(poll)
-            msg = await channel.send(**msg_content)
-
-            await self.bot.db.execute(
-                "UPDATE polls SET message_id = $1, fallback = true WHERE id = $2",
-                msg.id,
-                poll["id"],
+            polls = await conn.fetch(
+                "SELECT * FROM (polls LEFT JOIN pollsinfo ON polls.guild_id = pollsinfo.guild_id) LEFT JOIN pollstags ON polls.tag = pollstags.tag "
+                "WHERE time < TO_TIMESTAMP(1684627200)"
+                "ORDER BY time ASC"
             )
 
-        print("done")
+            channel = self.bot.get_channel(1214133803107491840)
+
+            for poll in polls:
+                msg_content = await self.formatpollmessage(poll)
+                msg = await channel.send(**msg_content)
+
+                await conn.execute(
+                    "UPDATE polls SET message_id = $1, fallback = true WHERE id = $2",
+                    msg.id,
+                    poll["id"],
+                )
+
+            print("done")
 
         pass
 
@@ -531,6 +548,11 @@ class PollsCog(commands.Cog, name="Polls"):
             embed = discord.Embed(title=poll["question"])
         else:
             embed = discord.Embed(title=f"#{poll['num']}: {poll['question']}")
+
+        embed.set_author(
+            name="🔗 View in browser",
+            url=f"https://marvelcord.com/polls/?type=id&search=id%3A+{poll['id']}",
+        )
 
         embed.description = poll["description"]
 
@@ -625,6 +647,11 @@ class PollsCog(commands.Cog, name="Polls"):
             showextra = False
 
         embed = discord.Embed()
+
+        embed.set_author(
+            name="🔗 View in browser",
+            url=f"https://marvelcord.com/polls/?type=id&search=id%3A+{poll['id']}",
+        )
 
         if poll["show_question"]:
             embed.title = poll["question"]
@@ -757,6 +784,11 @@ class PollsCog(commands.Cog, name="Polls"):
             tag = await self.fetchtag(poll["tag"])
 
         embed = discord.Embed()
+
+        embed.set_author(
+            name="🔗 View in browser",
+            url=f"https://marvelcord.com/polls/?type=id&search=id%3A+{poll['id']}",
+        )
 
         if poll["show_question"]:
             if not poll["num"]:
@@ -1045,6 +1077,172 @@ class PollsCog(commands.Cog, name="Polls"):
             "Ignoring exception in command %r", interaction.command.name, exc_info=error
         )
 
+    # PostgreSQL LISTEN/NOTIFY for poll updates #
+
+    def listener_log(self, msg):
+        if database_listener_logs:
+            print(f"[Polls Listener] {msg}")
+
+    async def setup_poll_listener(self):
+        """Set up PostgreSQL LISTEN connection for poll updates"""
+        await self.bot.wait_until_ready()
+
+        while not hasattr(self.bot, "db") or not self.bot.db:
+            await asyncio.sleep(0.1)
+
+        try:
+            # Create dedicated connection for listening
+            self.listener_connection = await asyncpg.connect(**postgres_credentials)
+
+            # Set platform and start listening
+            await self.listener_connection.execute("SET application_name = 'bot'")
+            await self.listener_connection.add_listener(
+                "poll_updates", self.handle_poll_notification
+            )
+
+            self.listening = True
+            self.listener_log("Started listening for poll updates")
+
+            # Keep connection alive
+            while self.listening:
+                await asyncio.sleep(1)
+
+        except Exception as e:
+            self.listener_log(f"Error setting up listener: {e}")
+            traceback.print_exc()
+            # Retry after delay
+            await asyncio.sleep(30)
+            if self.listening:
+                await self.setup_poll_listener()
+
+    async def handle_poll_notification(self, connection, pid, channel, payload):
+        """Handle incoming poll update notifications"""
+        try:
+            import json
+
+            data = json.loads(payload)
+            table = data.get("table")
+            operation = data.get("operation")
+            poll_id = data.get("id")
+            platform = data.get("platform")
+
+            # Ignore notifications from bot itself
+            if platform == "bot":
+                return
+
+            self.listener_log(
+                f"Received {operation} on {table} for ID {poll_id} from {platform}"
+            )
+
+            # Handle based on table and operation
+            if table == "polls":
+                await self.handle_poll_table_update(poll_id, operation)
+            elif table == "pollsvotes":
+                await self.handle_vote_table_update(poll_id, operation)
+
+        except Exception as e:
+            self.listener_log(f"Error handling notification: {e}")
+            traceback.print_exc()
+
+    async def handle_poll_table_update(self, poll_id, operation):
+        """Handle updates to polls table"""
+        try:
+            if operation == "DELETE":
+                self.listener_log(f"Poll {poll_id} was deleted")
+                # Clean up any scheduled tasks
+                for task_type in ["starts", "ends"]:
+                    for key, task in list(
+                        self.bot.tasks["poll_schedules"][task_type].items()
+                    ):
+                        if str(poll_id) in str(key):
+                            task.cancel()
+                            del self.bot.tasks["poll_schedules"][task_type][key]
+                            self.listener_log(
+                                f"Cancelled {task_type} task for poll {poll_id}"
+                            )
+                return
+
+            # For INSERT/UPDATE, refresh poll data and update message
+            poll = await self.fetchpoll(poll_id)
+            if poll:
+                if poll["published"]:
+                    await self.updatepollmessage(poll)
+                    self.listener_log(f"Updated message for poll {poll_id}")
+
+                await self.update_poll_scheduling(poll)
+
+        except Exception as e:
+            self.listener_log(f"Error handling poll update for {poll_id}: {e}")
+            traceback.print_exc()
+
+    async def handle_vote_table_update(self, poll_id, operation):
+        """Handle updates to pollsvotes table"""
+        try:
+            # For any vote change, update the poll message
+            poll = await self.fetchpoll(poll_id)
+            if poll and poll["published"]:
+                await self.updatepollmessage(poll)
+                self.listener_log(
+                    f"Updated message for poll {poll_id} due to vote change"
+                )
+
+        except Exception as e:
+            self.listener_log(f"Error handling vote update for {poll_id}: {e}")
+            traceback.print_exc()
+
+    async def update_poll_scheduling(self, poll):
+        """Update scheduling for a poll that may have changed timing"""
+        try:
+            # Cancel existing schedules for this poll
+            for task_type in ["starts", "ends"]:
+                for key, task in list(
+                    self.bot.tasks["poll_schedules"][task_type].items()
+                ):
+                    if str(poll["id"]) in str(key):
+                        task.cancel()
+                        del self.bot.tasks["poll_schedules"][task_type][key]
+                        self.listener_log(
+                            f"Cancelled {task_type} task for poll {poll['id']}"
+                        )
+
+            # Reschedule if needed
+            if poll["time"] and not poll["published"]:
+                await self.schedule_starts()
+            if poll["duration"] and poll["active"]:
+                await self.schedule_ends()
+
+        except Exception as e:
+            self.listener_log(f"Error updating scheduling for poll {poll['id']}: {e}")
+
+    async def stop_listener(self):
+        """Clean shutdown of the listener"""
+        self.listening = False
+        if hasattr(self, "listener_connection") and self.listener_connection:
+            try:
+                await self.listener_connection.remove_listener(
+                    "poll_updates", self.handle_poll_notification
+                )
+                await self.listener_connection.close()
+                self.listener_log(f"Stopped listening for poll updates")
+            except Exception as e:
+                self.listener_log(f"Error stopping listener: {e}")
+
+    def cog_unload(self):
+        """Clean up when the cog is unloaded"""
+        if hasattr(self, "listener_connection") and self.listener_connection:
+            asyncio.create_task(self.stop_listener())
+
+    @asynccontextmanager
+    async def acquire_bot_conn(self):
+        conn = await self.bot.db.acquire()
+        await conn.execute("SET application_name = 'bot'")
+        try:
+            yield conn
+        finally:
+            await self.bot.db.release(conn)
+
+    # other stuff i haven't categorised yet #
+
     async def splitstartpolls(self, poll_ids: list, *, set_time=None, natural=False):
         if not isinstance(poll_ids, list):
             poll_ids = [poll_ids]
@@ -1086,32 +1284,33 @@ class PollsCog(commands.Cog, name="Polls"):
         guild = await self.fetchguildinfo(poll["guild_id"])
         channel_id = self.fetchchannelid(guild, tag)
 
-        for poll, t in polls:
-            num = None
-            if tag:
-                if tag["current_num"]:
-                    num = (await self.fetchtag(poll["tag"]))["current_num"]
-                    await self.bot.db.execute(
-                        "UPDATE pollstags SET current_num = $2 WHERE tag = $1",
-                        tag["tag"],
-                        num + 1,
-                    )
+        async with self.acquire_bot_conn() as conn:
+            for poll, t in polls:
+                num = None
+                if tag:
+                    if tag["current_num"]:
+                        num = (await self.fetchtag(poll["tag"]))["current_num"]
+                        await conn.execute(
+                            "UPDATE pollstags SET current_num = $2 WHERE tag = $1",
+                            tag["tag"],
+                            num + 1,
+                        )
 
-            votes = [0 for i in range(len(poll["choices"]))]
+                votes = [0 for i in range(len(poll["choices"]))]
 
-            await self.bot.db.execute(
-                "UPDATE polls SET published = $2, active = $3, votes = $4, num = $5 WHERE id = $1",
-                poll["id"],
-                True,
-                True,
-                votes,
-                num,
-            )
-
-            if set_time:
-                await self.bot.db.execute(
-                    "UPDATE polls SET time = $2 WHERE id = $1", poll["id"], set_time
+                await conn.execute(
+                    "UPDATE polls SET published = $2, active = $3, votes = $4, num = $5 WHERE id = $1",
+                    poll["id"],
+                    True,
+                    True,
+                    votes,
+                    num,
                 )
+
+                if set_time:
+                    await conn.execute(
+                        "UPDATE polls SET time = $2 WHERE id = $1", poll["id"], set_time
+                    )
 
         msgs = [[await self.formatpollmessage(p), p] for p in [i[0] for i in polls]]
         final = []
@@ -1125,15 +1324,19 @@ class PollsCog(commands.Cog, name="Polls"):
             msg = await channel.send(**txt)
 
             if main:
-                await self.bot.db.execute(
-                    "UPDATE polls SET message_id = $2 WHERE id = $1", poll["id"], msg.id
-                )
+                async with self.acquire_bot_conn() as conn:
+                    await conn.execute(
+                        "UPDATE polls SET message_id = $2 WHERE id = $1",
+                        poll["id"],
+                        msg.id,
+                    )
             else:
-                await self.bot.db.execute(
-                    "UPDATE polls SET crosspost_message_ids = crosspost_message_ids || $2 WHERE id = $1",
-                    poll["id"],
-                    [msg.id],
-                )
+                async with self.acquire_bot_conn() as conn:
+                    await conn.execute(
+                        "UPDATE polls SET crosspost_message_ids = crosspost_message_ids || $2 WHERE id = $1",
+                        poll["id"],
+                        [msg.id],
+                    )
 
             if poll["thread_question"]:
                 name = poll["question"]
@@ -1150,9 +1353,12 @@ class PollsCog(commands.Cog, name="Polls"):
 
             return msg
 
-        await self.bot.db.execute(
-            "UPDATE polls SET crosspost_message_ids = $2 WHERE id = $1", poll["id"], []
-        )
+        async with self.acquire_bot_conn() as conn:
+            await conn.execute(
+                "UPDATE polls SET crosspost_message_ids = $2 WHERE id = $1",
+                poll["id"],
+                [],
+            )
         for txt, poll in msgs:
             final.append([poll, await send(txt, poll, channel)])
             for ch in crossposts:
@@ -1201,9 +1407,10 @@ class PollsCog(commands.Cog, name="Polls"):
 
             endmsgtags = [tag]
             if tag["end_message_replace"]:
-                alltags = await self.bot.db.fetch(
-                    "SELECT * FROM pollstags WHERE end_message_replace = $1", True
-                )
+                async with self.acquire_bot_conn() as conn:
+                    alltags = await conn.fetch(
+                        "SELECT * FROM pollstags WHERE end_message_replace = $1", True
+                    )
                 channels = [tag["channel_id"]] + tag["crosspost_channels"]
                 endmsgtags += [
                     i
@@ -1231,17 +1438,19 @@ class PollsCog(commands.Cog, name="Polls"):
                                 latest.remove(message_id)
                                 break
                     if change:
-                        await self.bot.db.execute(
-                            "UPDATE pollstags SET end_message_latest_ids = $2 WHERE tag = $1",
-                            t["tag"],
-                            latest,
-                        )
+                        async with self.acquire_bot_conn() as conn:
+                            await conn.execute(
+                                "UPDATE pollstags SET end_message_latest_ids = $2 WHERE tag = $1",
+                                t["tag"],
+                                latest,
+                            )
 
-            await self.bot.db.execute(
-                "UPDATE pollstags SET end_message_latest_ids = $2 WHERE tag = $1",
-                tag["tag"],
-                [m.id for m in endmsgs],
-            )
+            async with self.acquire_bot_conn() as conn:
+                await conn.execute(
+                    "UPDATE pollstags SET end_message_latest_ids = $2 WHERE tag = $1",
+                    tag["tag"],
+                    [m.id for m in endmsgs],
+                )
 
         for poll, t in polls:
             poll = await self.fetchpoll(poll["id"])
@@ -1263,15 +1472,16 @@ class PollsCog(commands.Cog, name="Polls"):
             if tag["channel_id"]:
                 channel_id = tag["channel_id"]
 
-        await self.bot.db.execute(
-            "UPDATE polls SET active = $2 WHERE id = $1", poll["id"], False
-        )
-
-        if set_time:
-            duration = current_time - poll["time"]
-            await self.bot.db.execute(
-                "UPDATE polls SET duration = $2 WHERE id = $1", poll["id"], duration
+        async with self.acquire_bot_conn() as conn:
+            await conn.execute(
+                "UPDATE polls SET active = $2 WHERE id = $1", poll["id"], False
             )
+
+            if set_time:
+                duration = current_time - poll["time"]
+                await conn.execute(
+                    "UPDATE polls SET duration = $2 WHERE id = $1", poll["id"], duration
+                )
 
         if poll["duration"]:
             await self.schedule_ends(poll_ids=[poll["id"]], natural=natural)
@@ -1339,9 +1549,10 @@ class PollsCog(commands.Cog, name="Polls"):
         )
 
     async def schedule_starts(self, *, tag=0, timestamps=[], natural=False):
-        polls = await self.bot.db.fetch(
-            "SELECT * FROM polls WHERE time IS NOT NULL AND published = $1", False
-        )
+        async with self.acquire_bot_conn() as conn:
+            polls = await conn.fetch(
+                "SELECT * FROM polls WHERE time IS NOT NULL AND published = $1", False
+            )
 
         for k, v in self.bot.tasks["poll_schedules"]["starts"].items():
             if (
@@ -1370,9 +1581,10 @@ class PollsCog(commands.Cog, name="Polls"):
                     ] = self.bot.loop.create_task(self.scheduler(v, True))
 
     async def schedule_ends(self, *, poll_ids: list = [], natural=False):
-        polls = await self.bot.db.fetch(
-            "SELECT * FROM polls WHERE duration IS NOT NULL AND active = $1", True
-        )
+        async with self.acquire_bot_conn() as conn:
+            polls = await conn.fetch(
+                "SELECT * FROM polls WHERE duration IS NOT NULL AND active = $1", True
+            )
 
         for k, v in self.bot.tasks["poll_schedules"]["ends"].items():
             if (not poll_ids or k in poll_ids) and not natural:
@@ -1439,6 +1651,9 @@ class PollsCog(commands.Cog, name="Polls"):
         await self.updatevotes(poll)
         poll = await self.fetchpoll(poll["id"])
 
+        if not poll["message_id"]:
+            return
+
         txt = await self.formatpollmessage(poll)
 
         msg = await self.fetchpollmsg(poll)
@@ -1472,15 +1687,16 @@ class PollsCog(commands.Cog, name="Polls"):
                             await msg.edit(**txt)
 
     async def updatevotes(self, poll):
-        votes = await self.bot.db.fetch(
-            "SELECT (choice) from pollsvotes WHERE poll_id = $1", poll["id"]
-        )
-        votes = [i["choice"] for i in votes]
-        total = [votes.count(i) for i in range(len(poll["choices"]))]
-        if total != poll["votes"]:
-            await self.bot.db.execute(
-                "UPDATE polls SET votes = $2 WHERE id = $1", poll["id"], total
+        async with self.acquire_bot_conn() as conn:
+            votes = await conn.fetch(
+                "SELECT (choice) from pollsvotes WHERE poll_id = $1", poll["id"]
             )
+            votes = [i["choice"] for i in votes]
+            total = [votes.count(i) for i in range(len(poll["choices"]))]
+            if total != poll["votes"]:
+                await conn.execute(
+                    "UPDATE polls SET votes = $2 WHERE id = $1", poll["id"], total
+                )
         return total
 
     def defaultthreadmsg(self, msg, vote=None):
@@ -1661,9 +1877,11 @@ class PollsCog(commands.Cog, name="Polls"):
         return self.PollView(self, poll, **kwargs)
 
     async def on_startup_buttons(self):
-        polls = await self.bot.db.fetch(
-            "SELECT * FROM polls NATURAL LEFT JOIN pollstags WHERE published = $1", True
-        )
+        async with self.acquire_bot_conn() as conn:
+            polls = await conn.fetch(
+                "SELECT * FROM polls NATURAL LEFT JOIN pollstags WHERE published = $1",
+                True,
+            )
         polls.sort(key=lambda x: discord.utils.utcnow() - x["time"])
         polls.sort(key=lambda x: not x["active"])
 
@@ -1675,48 +1893,49 @@ class PollsCog(commands.Cog, name="Polls"):
             self.bot.add_view(view)
 
     async def vote(self, poll, user, choice=None):
-        vote = await self.bot.db.fetchrow(
-            "SELECT * FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
-            user.id,
-            poll["id"],
-        )
+        async with self.acquire_bot_conn() as conn:
+            vote = await conn.fetchrow(
+                "SELECT * FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
+                user.id,
+                poll["id"],
+            )
 
-        if (
-            (poll["active"] or poll["persistent"])
-            and poll["published"]
-            and choice is not None
-        ):
-            if choice == -1:
-                await self.bot.db.execute(
-                    "DELETE FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
-                    user.id,
-                    poll["id"],
-                )
-            else:
-                if not vote:
-                    await self.bot.db.execute(
-                        "INSERT INTO pollsvotes (id, user_id, poll_id, choice) VALUES ($1, $2, $3, $4)",
-                        user.id + poll["id"],
+            if (
+                (poll["active"] or poll["persistent"])
+                and poll["published"]
+                and choice is not None
+            ):
+                if choice == -1:
+                    await conn.execute(
+                        "DELETE FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
                         user.id,
                         poll["id"],
-                        choice,
                     )
                 else:
-                    await self.bot.db.execute(
-                        "UPDATE pollsvotes SET choice = $1 WHERE user_id = $2 AND poll_id = $3",
-                        choice,
-                        user.id,
-                        poll["id"],
-                    )
+                    if not vote:
+                        await conn.execute(
+                            "INSERT INTO pollsvotes (id, user_id, poll_id, choice) VALUES ($1, $2, $3, $4)",
+                            user.id + poll["id"],
+                            user.id,
+                            poll["id"],
+                            choice,
+                        )
+                    else:
+                        await conn.execute(
+                            "UPDATE pollsvotes SET choice = $1 WHERE user_id = $2 AND poll_id = $3",
+                            choice,
+                            user.id,
+                            poll["id"],
+                        )
 
-            await self.updatepollmessage(poll)
+                await self.updatepollmessage(poll)
 
-            return choice
-        else:
-            if vote:
-                return vote["choice"]
+                return choice
             else:
-                return None
+                if vote:
+                    return vote["choice"]
+                else:
+                    return None
 
     async def add_to_thread(self, interaction, poll=None, choice=None, show_vote=False):
         thread = interaction.message.guild.get_channel_or_thread(interaction.message.id)
@@ -1793,10 +2012,11 @@ class PollsCog(commands.Cog, name="Polls"):
                     )
 
     async def on_startup_selfassign(self):
-        tags = await self.bot.db.fetch(
-            "SELECT * FROM pollstags WHERE end_message_self_assign = $1 and cardinality(end_message_role_ids) <> 0",
-            True,
-        )
+        async with self.acquire_bot_conn() as conn:
+            tags = await conn.fetch(
+                "SELECT * FROM pollstags WHERE end_message_self_assign = $1 and cardinality(end_message_role_ids) <> 0",
+                True,
+            )
 
         for t in tags:
             view = self.SelfAssignRoleView(t["end_message_role_ids"])
@@ -2041,10 +2261,9 @@ class PollsCog(commands.Cog, name="Polls"):
 
         while True:
             poll_id = random.randint(10000, 99999)
-            if not await self.bot.db.fetchrow(
-                "SELECT id FROM polls WHERE id = $1", poll_id
-            ):
-                break
+            async with self.acquire_bot_conn() as conn:
+                if not conn.fetchrow("SELECT id FROM polls WHERE id = $1", poll_id):
+                    break
 
         # id (int), num (int), time (datetime), message_id (int), question (str), thread_question (str), choices (str[]), votes (int[]), image (str), published (bool), duration (datetime), guild_id (int), description (str), tag (int), show_question (bool), show_options (bool), show_voting (bool), active (bool), crosspost_message_ids (int[])
 
@@ -2167,15 +2386,16 @@ class PollsCog(commands.Cog, name="Polls"):
                 f"Question is too long! Must be less than {self.maxqlength} characters."
             )
 
-        await self.bot.db.execute(
-            f"""
-				INSERT INTO polls
-					({", ".join(poll.keys())})
-				VALUES
-					({", ".join(f"${i}" for i in range(1, len(poll) + 1))})
-			""",
-            *poll.values(),
-        )
+        async with self.acquire_bot_conn() as conn:
+            await conn.execute(
+                f"""
+                    INSERT INTO polls
+                        ({", ".join(poll.keys())})
+                    VALUES
+                        ({", ".join(f"${i}" for i in range(1, len(poll) + 1))})
+                """,
+                *poll.values(),
+            )
 
         poll = await self.fetchpoll(poll_id)
         embed = await self.pollinfoembed(poll)
@@ -2230,10 +2450,9 @@ class PollsCog(commands.Cog, name="Polls"):
         if view.value is None:
             await msg.edit(content="Timed out.", view=view)
         elif view.value:
-            await self.bot.db.execute("DELETE FROM polls WHERE id = $1", poll_id)
-            await self.bot.db.execute(
-                "DELETE FROM pollsvotes WHERE poll_id = $1", poll_id
-            )
+            async with self.acquire_bot_conn() as conn:
+                await conn.execute("DELETE FROM polls WHERE id = $1", poll_id)
+                await conn.execute("DELETE FROM pollsvotes WHERE poll_id = $1", poll_id)
 
             # tags = await self.fetchalltags()
             # findtag = lambda x: next(i for i in tags if i['id'] == x['tag'])
@@ -2455,11 +2674,12 @@ class PollsCog(commands.Cog, name="Polls"):
                 for k, i in zip(final.keys(), list(range(2, len(final) + 2)))
             ]
 
-            await self.bot.db.execute(
-                f"UPDATE polls SET {', '.join(txt)} WHERE id = $1",
-                poll_id,
-                *final.values(),
-            )
+            async with self.acquire_bot_conn() as conn:
+                await conn.execute(
+                    f"UPDATE polls SET {', '.join(txt)} WHERE id = $1",
+                    poll_id,
+                    *final.values(),
+                )
 
         else:
             clearvalue = "-clear"
@@ -2507,11 +2727,12 @@ class PollsCog(commands.Cog, name="Polls"):
                     f"{k} = ${i}" for k, i in zip(name, list(range(1, len(values) + 1)))
                 ]
 
-                await self.bot.db.execute(
-                    f"UPDATE polls SET {', '.join(txt)} WHERE id = ${len(values) + 1}",
-                    *values,
-                    poll_id,
-                )
+                async with self.acquire_bot_conn() as conn:
+                    await conn.execute(
+                        f"UPDATE polls SET {', '.join(txt)} WHERE id = ${len(values) + 1}",
+                        *values,
+                        poll_id,
+                    )
 
             clear = lambda x: None if x == clearvalue else x
 
@@ -2681,9 +2902,10 @@ class PollsCog(commands.Cog, name="Polls"):
                 )
 
         if not poll["published"] and (schedule_time != poll["time"] or clearschedule):
-            await self.bot.db.execute(
-                "UPDATE polls SET time = $1 WHERE id = $2", scheduled, poll_id
-            )
+            async with self.acquire_bot_conn() as conn:
+                await conn.execute(
+                    "UPDATE polls SET time = $1 WHERE id = $2", scheduled, poll_id
+                )
 
             if poll["time"]:
                 if not clearschedule:
@@ -2703,11 +2925,12 @@ class PollsCog(commands.Cog, name="Polls"):
                 )
             if duration == -1:
                 durationtimedelta = None
-            await self.bot.db.execute(
-                "UPDATE polls SET duration = $1 WHERE id = $2",
-                durationtimedelta,
-                poll_id,
-            )
+            async with self.acquire_bot_conn() as conn:
+                await conn.execute(
+                    "UPDATE polls SET duration = $1 WHERE id = $2",
+                    durationtimedelta,
+                    poll_id,
+                )
 
             await self.schedule_ends(poll_ids=[poll_id])
 
@@ -2839,12 +3062,13 @@ class PollsCog(commands.Cog, name="Polls"):
 
         if duration:
             durationtimedelta = datetime.timedelta(seconds=duration)
-            await self.bot.db.execute(
-                "UPDATE polls SET time = $2, duration = $3 WHERE id = $1",
-                poll_id,
-                discord.utils.utcnow(),
-                durationtimedelta,
-            )
+            async with self.acquire_bot_conn() as conn:
+                await conn.execute(
+                    "UPDATE polls SET time = $2, duration = $3 WHERE id = $1",
+                    poll_id,
+                    discord.utils.utcnow(),
+                    durationtimedelta,
+                )
 
         result = await self.startpoll(poll["id"], set_time=currenttime)
 
@@ -2946,9 +3170,10 @@ class PollsCog(commands.Cog, name="Polls"):
             poll = await self.fetchpoll(poll_id)
 
             if not poll:
-                poll = await self.bot.db.fetchrow(
-                    "SELECT * FROM polls WHERE num = $1", poll_id
-                )
+                async with self.acquire_bot_conn() as conn:
+                    poll = await conn.fetchrow(
+                        "SELECT * FROM polls WHERE num = $1", poll_id
+                    )
 
             managerperms = await self.hasmanagerperms(interaction)
 
@@ -3021,13 +3246,14 @@ class PollsCog(commands.Cog, name="Polls"):
             guildid = await self.fetchguildid(interaction)
 
             try:
-                if not queries:
-                    polls = await self.bot.db.fetch("SELECT * FROM polls")
-                else:
-                    polls = await self.bot.db.fetch(
-                        f"SELECT * FROM polls WHERE {' AND '.join(queries).format(*list(range(1, len(values) + 1)))}",
-                        *values,
-                    )
+                async with self.acquire_bot_conn() as conn:
+                    if not queries:
+                        polls = await conn.fetch("SELECT * FROM polls")
+                    else:
+                        polls = await conn.fetch(
+                            f"SELECT * FROM polls WHERE {' AND '.join(queries).format(*list(range(1, len(values) + 1)))}",
+                            *values,
+                        )
                 if keyword:
                     polls = self.keywordsearch(keyword, polls)
             except asyncpg.exceptions.InvalidRegularExpressionError:
@@ -3134,9 +3360,10 @@ class PollsCog(commands.Cog, name="Polls"):
         else:
             op = False
 
-        votes = await self.bot.db.fetch(
-            "SELECT * FROM pollsvotes WHERE user_id = $1", user.id
-        )
+        async with self.acquire_bot_conn() as conn:
+            votes = await conn.fetch(
+                "SELECT * FROM pollsvotes WHERE user_id = $1", user.id
+            )
 
         # votes = {int(k): v for k, v in votes.items() if k != 'user_id'}
 
@@ -3146,9 +3373,10 @@ class PollsCog(commands.Cog, name="Polls"):
             if not show_unvoted:
                 poll_ids = list(votes.keys())
 
-                polls = await self.bot.db.fetch(
-                    "SELECT * FROM polls WHERE id = ANY($1::integer[])", poll_ids
-                )
+                async with self.acquire_bot_conn() as conn:
+                    polls = await conn.fetch(
+                        "SELECT * FROM polls WHERE id = ANY($1::integer[])", poll_ids
+                    )
                 polls = [
                     i for i in polls if await self.canview(i, interaction.guild_id)
                 ]
@@ -3196,12 +3424,13 @@ class PollsCog(commands.Cog, name="Polls"):
                         return embed
 
             else:
-                polls = await self.bot.db.fetch(
-                    "SELECT * FROM "
-                    "polls NATURAL LEFT JOIN pollsinfo NATURAL LEFT JOIN pollstags "
-                    "WHERE (active = $1 or persistent = $1) and published = $1",
-                    True,
-                )
+                async with self.acquire_bot_conn() as conn:
+                    polls = await conn.fetch(
+                        "SELECT * FROM "
+                        "polls NATURAL LEFT JOIN pollsinfo NATURAL LEFT JOIN pollstags "
+                        "WHERE (active = $1 or persistent = $1) and published = $1",
+                        True,
+                    )
                 polls = [
                     i
                     for i in polls
@@ -3346,9 +3575,12 @@ class PollsCog(commands.Cog, name="Polls"):
 
             txt = [f"{k} = ${i}" for k, i in zip(name, list(range(2, len(values) + 2)))]
 
-            await self.bot.db.execute(
-                f"UPDATE polls SET {', '.join(txt)} WHERE tag = $1", tag["tag"], *values
-            )
+            async with self.acquire_bot_conn() as conn:
+                await conn.execute(
+                    f"UPDATE polls SET {', '.join(txt)} WHERE tag = $1",
+                    tag["tag"],
+                    *values,
+                )
 
         names = []
         values = []
@@ -3372,9 +3604,8 @@ class PollsCog(commands.Cog, name="Polls"):
 
         await update(names, *values)
 
-        polls = await self.bot.db.fetch(
-            "SELECT * FROM polls WHERE tag = $1", tag["tag"]
-        )
+        async with self.acquire_bot_conn() as conn:
+            polls = await conn.fetch("SELECT * FROM polls WHERE tag = $1", tag["tag"])
 
         for poll in polls:
             txt.append(f"- `{poll['id']}` {poll['question']}")
@@ -3466,36 +3697,37 @@ class PollsCog(commands.Cog, name="Polls"):
         await task(self.schedule_ends, "end_schedule")
 
         async def update_votes():
-            if not tag:
-                polls = await self.bot.db.fetch("SELECT * FROM polls")
-            else:
-                polls = await self.bot.db.fetch(
-                    "SELECT * FROM polls WHERE tag = $1", tag
-                )
-            pollids = [i["id"] for i in polls if i["published"]]
+            async with self.acquire_bot_conn() as conn:
+                if not tag:
+                    polls = await conn.fetch("SELECT * FROM polls")
+                else:
+                    polls = await conn.fetch("SELECT * FROM polls WHERE tag = $1", tag)
+                pollids = [i["id"] for i in polls if i["published"]]
 
-            votes = await self.bot.db.fetch("SELECT * FROM pollsvotes")
-            votepolls = {i["poll_id"] for i in votes}
+                votes = await conn.fetch("SELECT * FROM pollsvotes")
+                votepolls = {i["poll_id"] for i in votes}
 
-            if not tag:
-                for p in votepolls:
-                    if p not in pollids:
-                        await self.bot.db.execute(
-                            "DELETE FROM pollsvotes WHERE poll_id = $1", p
+                if not tag:
+                    for p in votepolls:
+                        if p not in pollids:
+                            await conn.execute(
+                                "DELETE FROM pollsvotes WHERE poll_id = $1", p
+                            )
+
+                    votes = await conn.fetch("SELECT * FROM pollsvotes")
+
+                for poll in polls:
+                    if not poll["active"]:
+                        continue
+                    v = [i["choice"] for i in votes if i["poll_id"] == poll["id"]]
+                    total = [v.count(i) for i in range(len(poll["choices"]))]
+
+                    if total != poll["votes"]:
+                        await conn.execute(
+                            "UPDATE polls SET votes = $2 WHERE id = $1",
+                            poll["id"],
+                            total,
                         )
-
-                votes = await self.bot.db.fetch("SELECT * FROM pollsvotes")
-
-            for poll in polls:
-                if not poll["active"]:
-                    continue
-                v = [i["choice"] for i in votes if i["poll_id"] == poll["id"]]
-                total = [v.count(i) for i in range(len(poll["choices"]))]
-
-                if total != poll["votes"]:
-                    await self.bot.db.execute(
-                        "UPDATE polls SET votes = $2 WHERE id = $1", poll["id"], total
-                    )
 
         await task(update_votes, "update_votes")
 
@@ -3574,10 +3806,9 @@ class PollsCog(commands.Cog, name="Polls"):
 
         while True:
             tag_id = random.randint(100, 999)
-            if not await self.bot.db.fetchrow(
-                "SELECT id FROM polls WHERE id = $1", tag_id
-            ):
-                break
+            async with self.acquire_bot_conn() as conn:
+                if not conn.fetchrow("SELECT id FROM polls WHERE id = $1", tag_id):
+                    break
 
         insert = {
             "tag": tag_id,
@@ -3639,13 +3870,14 @@ class PollsCog(commands.Cog, name="Polls"):
         if view.value is None:
             await msg.edit(content="Timed out.", view=view)
         elif view.value:
-            await self.bot.db.execute(
-                f"""INSERT INTO pollstags
-                        ({", ".join(insert.keys())})
-                        VALUES ({", ".join(f"${i}" for i in range(1, len(insert) + 1))})
-                """,
-                *insert.values(),
-            )
+            async with self.acquire_bot_conn() as conn:
+                await conn.execute(
+                    f"""INSERT INTO pollstags
+                            ({", ".join(insert.keys())})
+                            VALUES ({", ".join(f"${i}" for i in range(1, len(insert) + 1))})
+                    """,
+                    *insert.values(),
+                )
 
             await msg.edit(content="Successfully created new tag.", view=None)
 
@@ -3788,11 +4020,12 @@ class PollsCog(commands.Cog, name="Polls"):
             f"{k} = ${i}" for k, i in zip(final.keys(), list(range(2, len(final) + 2)))
         ]
 
-        await self.bot.db.execute(
-            f"UPDATE pollstags SET {', '.join(txt)} WHERE tag = $1",
-            tag["tag"],
-            *final.values(),
-        )
+        async with self.acquire_bot_conn() as conn:
+            await conn.execute(
+                f"UPDATE pollstags SET {', '.join(txt)} WHERE tag = $1",
+                tag["tag"],
+                *final.values(),
+            )
 
         oldtag = tag
         newtag = await self.fetchtag(tag["tag"])
@@ -3867,11 +4100,12 @@ class PollsCog(commands.Cog, name="Polls"):
             roles.append(ping_role.id)
             txt = ["added", "to"]
 
-        await self.bot.db.execute(
-            "UPDATE pollstags SET end_message_role_ids = $2 WHERE tag = $1",
-            tag["tag"],
-            roles,
-        )
+        async with self.acquire_bot_conn() as conn:
+            await conn.execute(
+                "UPDATE pollstags SET end_message_role_ids = $2 WHERE tag = $1",
+                tag["tag"],
+                roles,
+            )
 
         await interaction.followup.send(
             f"Successfully **{txt[0]}** {ping_role.mention} {txt[1]} the **{tag['name']}** ({tag['tag']}) tag.",
@@ -3916,12 +4150,13 @@ class PollsCog(commands.Cog, name="Polls"):
         channels.append(channel.id)
         guilds.append(channel.guild.id)
 
-        await self.bot.db.execute(
-            "UPDATE pollstags SET crosspost_channels = $2, crosspost_servers = $3 WHERE tag = $1",
-            tag["tag"],
-            channels,
-            guilds,
-        )
+        async with self.acquire_bot_conn() as conn:
+            await conn.execute(
+                "UPDATE pollstags SET crosspost_channels = $2, crosspost_servers = $3 WHERE tag = $1",
+                tag["tag"],
+                channels,
+                guilds,
+            )
 
         await interaction.followup.send(
             f"Linked {channel.mention} to crossposts from *{tag['name']}* (`{tag['tag']}`)"
@@ -3967,12 +4202,13 @@ class PollsCog(commands.Cog, name="Polls"):
         channels.pop(index)
         guilds.pop(index)
 
-        await self.bot.db.execute(
-            "UPDATE pollstags SET crosspost_channels = $2, crosspost_servers = $3 WHERE tag = $1",
-            tag["tag"],
-            channels,
-            guilds,
-        )
+        async with self.acquire_bot_conn() as conn:
+            await conn.execute(
+                "UPDATE pollstags SET crosspost_channels = $2, crosspost_servers = $3 WHERE tag = $1",
+                tag["tag"],
+                channels,
+                guilds,
+            )
 
         await interaction.followup.send(
             f"Unlinked {channel.mention} from crossposts from *{tag['name']}* (`{tag['tag']}`)"

@@ -1,9 +1,11 @@
-import discord
 from discord.ext import commands
-import asyncio
 import asyncpg
 
 from config import *
+
+
+async def init_db_connection(conn):
+    await conn.execute("SET application_name = 'bot'")
 
 
 class PostgreSQLCog(commands.Cog, name="PostgreSQL"):
@@ -18,7 +20,9 @@ class PostgreSQLCog(commands.Cog, name="PostgreSQL"):
         self.bot.postgresql_loaded = False
 
     async def loadPostgreSQL(self):
-        self.bot.db = await asyncpg.create_pool(**self.credentials)
+        self.bot.db = await asyncpg.create_pool(
+            **self.credentials, init=init_db_connection
+        )
         self.bot.postgresql_loaded = True
 
         create_functions = [
@@ -32,7 +36,7 @@ class PostgreSQLCog(commands.Cog, name="PostgreSQL"):
                      procedure=commuted_regexp_match(text,text),
                      leftarg=text, rightarg=text
                 );
-            """
+            """,
         ]
 
         for f in create_functions:
