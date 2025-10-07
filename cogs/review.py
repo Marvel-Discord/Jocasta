@@ -1,5 +1,5 @@
 from discord.ext import commands
-from discord import Embed
+from discord import Embed, Forbidden
 
 
 class ReviewCog(commands.Cog) :
@@ -39,6 +39,24 @@ class ReviewCog(commands.Cog) :
         # Check for required keywords
         required_keywords = ["rating", "length", "review"]
         if not all(keyword in message.content.lower() for keyword in required_keywords) :
+
+            try:
+                # Try to DM the user before deleting the message
+                reason = (
+                    "Your review post was removed because it doesn't follow the required format.\n"
+                    "Please make sure to follow the provided format.\n"
+                    "If you keep experiencing issues, try copying the format or a previous review, and fill in your own information.\n\n"
+                    "Here’s what you wrote so you can easily copy and fix it:"
+                )
+        
+                await message.author.send(
+                    f"Hey {message.author.display_name},\n\n{reason}\n"
+                    f"```\n{message.content[:1900]}\n```"
+                )
+            except Forbidden:
+                # User has DMs disabled or blocked the bot
+                pass
+            
             await message.delete()
             return
         
@@ -49,7 +67,9 @@ class ReviewCog(commands.Cog) :
             
         # Send new embed to appear at bottom
         await message.channel.send(embed = self.review_format_embed)
-            
+
+        # Add reaction to passed messages
+        await message.add_reaction("<:mattsip:855346891456905216>")
             
 async def setup(bot: commands.Bot) :
     """Standard setup function for discord.py cogs."""
