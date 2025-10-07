@@ -14,7 +14,7 @@ class ReviewCog(commands.Cog) :
                 title = "**Review Format**",
                 description = (
                     "Use the following template to post.\n"
-                    "```Comic Name\n"
+                    "```\n## Comic Name\n"
                     "**Rating:** x/10\n"
                     "**Length:** x issues or x pages or something similar\n"
                     "**Review:** A few words about your thoughts on the comic and why you gave it that rating```"
