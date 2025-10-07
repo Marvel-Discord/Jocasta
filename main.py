@@ -21,6 +21,7 @@ class Jocasta(commands.Bot):
             "cogs.movies",
             "cogs.embed",
             "cogs.docs",
+            "cogs.review",
             # 'cogs.betatesting'
         ]
 
