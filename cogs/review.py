@@ -1,5 +1,6 @@
 from discord.ext import commands
 from discord import Embed, Forbidden
+import config
 import re
 
 
@@ -7,7 +8,7 @@ class ReviewCog(commands.Cog) :
     def __init__(self, bot) :
         self.bot = bot
     
-        self.review_channel_id = 1382732564610945194 
+        self.review_channel_id = config.comic_review_channel
 
         self.review_instruction_embed = Embed(
             title="**How to Post Reviews**",
@@ -79,7 +80,8 @@ class ReviewCog(commands.Cog) :
         await message.channel.send(content=self.format_message)
 
         # Add reaction to passed messages
-        await message.add_reaction("<:mattsip:855346891456905216>")
+        emoji = self.bot.get_emoji(config.mattsip_emoji) 
+        await message.add_reaction(emoji)
 
         # Create a thread for discussion
         first_line = message.content.strip().split("\n", 1)[0]
