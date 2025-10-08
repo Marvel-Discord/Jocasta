@@ -1,0 +1,37 @@
+TOKEN = ""
+
+BOT_PREFIX = "~"
+
+postgres_credentials = {
+    "user": "",
+    "password": "",
+    "database": "",
+    "host": "",
+    "port": ,
+}
+global_slashies = True
+
+database_listener_logs = True
+
+homeserver = 281648235557421056
+
+newschannels = [
+    1028517433637605406
+]
+newspingrole = 1028517557742878810
+newspingbuffertime = 600  # 10 mins
+
+spoiler_thread_channel = 1157501585405005874
+
+raidlogservers = {288896937074360321: 0xEE171F, 1010550869391065169: 0xFFFFFF}
+raidlogdest = [288896937074360321, 419628744974663681]
+
+comic_review_channel = 1382732564610945194
+mattsip_emoji = 855346891456905216
+
+marvelKey_public = ""
+marvelKey_private = ""
+
+TMDB_KEY = ""
+
+GITHUB_PAT_DOCS = ""
