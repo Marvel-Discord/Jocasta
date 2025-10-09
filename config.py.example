@@ -27,7 +27,7 @@ raidlogservers = {288896937074360321: 0xEE171F, 1010550869391065169: 0xFFFFFF}
 raidlogdest = [288896937074360321, 419628744974663681]
 
 comic_review_channel = 1382732564610945194
-mattsip_emoji = 855346891456905216
+review_reaction_emoji = 855346891456905216
 
 marvelKey_public = ""
 marvelKey_private = ""
