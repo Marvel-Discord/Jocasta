@@ -80,7 +80,7 @@ class ReviewCog(commands.Cog) :
         await message.channel.send(content=self.format_message)
 
         # Add reaction to passed messages
-        emoji = self.bot.get_emoji(config.mattsip_emoji) 
+        emoji = self.bot.get_emoji(config.review_reaction_emoji) 
         await message.add_reaction(emoji)
 
         # Create a thread for discussion
