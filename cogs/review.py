@@ -18,6 +18,7 @@ class ReviewCog(commands.Cog) :
                 "**Notes:**\n"
                 "- Only post reviews for full runs, collected editions, or one-shots.\n"
                 "- No individual issue reviews (unless it's a one-shot)."
+                "- As these reviews are meant for people who haven't read the comic yet, please **do not use any spoilers** in your review, even if it's an old comic. If you must talk spoilers, make sure to use spoiler brackets ``||like this||``."
             ),
         )
 
@@ -26,7 +27,7 @@ class ReviewCog(commands.Cog) :
             "## Comic Name\n"
             "**Year and writer:**\n"
             "**Rating:** x/10\n"
-            "**Review:** A few words about your thoughts on the comic and why you gave it that rating. You could include details such as the length of the book, quality of the art, required background reading, etc.\n"
+            "**Review:** A few words about your thoughts on the comic and why you gave it that rating. You could include details such as the length of the book, quality of the art, required background reading, etc. Make sure to not include any spoilers in your review, or if you really have to, use spoiler brackets ||like this||.\n"
             "```"
         )
 
