@@ -17,7 +17,7 @@ class ReviewCog(commands.Cog) :
                 "Your message will be deleted if it doesn't follow the format.\n\n"
                 "**Notes:**\n"
                 "- Only post reviews for full runs, collected editions, or one-shots.\n"
-                "- No individual issue reviews (unless it's a one-shot)."
+                "- No individual issue reviews (unless it's a one-shot).\n"
                 "- As these reviews are meant for people who haven't read the comic yet, please use spoiler brackets ``||like this||`` if you want to include spoilers in your review. Not using spoiler brackets on spoilers may lead to your review being removed."
             ),
         )
