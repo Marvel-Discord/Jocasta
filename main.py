@@ -3,8 +3,6 @@ from discord.ext import commands
 
 from config import *
 
-import datetime
-
 
 class Jocasta(commands.Bot):
     async def setup_hook(self):

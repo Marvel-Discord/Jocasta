@@ -1,6 +1,6 @@
 betatesting.py
-config.py
 /movietest
 
 __pycache__/
 .idea/*
+.env
