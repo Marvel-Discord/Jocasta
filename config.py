@@ -32,3 +32,6 @@ raidlogdest = [int(x) for x in os.getenv("RAIDLOGDEST", "").split(",") if x]
 
 TMDB_KEY = os.getenv("TMDB_KEY")
 GITHUB_PAT_DOCS = os.getenv("GITHUB_PAT_DOCS")
+
+comic_review_channel = int(os.getenv("COMIC_REVIEW_CHANNEL", 0))
+review_reaction_emoji = os.getenv("REVIEW_REACTION_EMOJI", 0)
