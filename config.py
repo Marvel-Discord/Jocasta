@@ -35,3 +35,6 @@ GITHUB_PAT_DOCS = os.getenv("GITHUB_PAT_DOCS")
 
 comic_review_channel = int(os.getenv("COMIC_REVIEW_CHANNEL", 0))
 review_reaction_emoji = int(os.getenv("REVIEW_REACTION_EMOJI", 0))
+
+request_spoiler_thread = int(os.getenv("REQUEST_SPOILER_THREAD",0))
+# Thread ID = 1109734588378525748
