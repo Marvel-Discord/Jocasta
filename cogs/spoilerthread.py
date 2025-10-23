@@ -13,7 +13,7 @@ class SpoilerThreadCog(commands.Cog) :
             title="**Request Spoiler Threads**",
             description=(
                 "Here you can request spoiler threads about new movies/shows/games! Simply state the title of whatever you want a thread for.\n\n" 
-                "Please ***only*** request a thread if you **intend to use it!**"
+                "Please ***only*** request a thread for recent releases or stuff that will release soon. Please ***only*** request a thread if you **intend to use it!**"
             ),
         )
 
