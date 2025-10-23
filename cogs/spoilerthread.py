@@ -6,7 +6,7 @@ class SpoilerThreadCog(commands.Cog) :
     def __init__(self, bot) :
         self.bot = bot
     
-        self.request_spoiler_thread_id = config.request_spoiler_thread
+        self.request_spoiler_thread_id = config.spoiler_thread_channel
     
         # Sticky messages
         self.thread_request_embed = Embed(
