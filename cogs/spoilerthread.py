@@ -28,11 +28,13 @@ class SpoilerThreadCog(commands.Cog) :
         if message.channel.id != self.request_spoiler_thread_id :
             return   
         
-        # Remove previous embed messages from bot to keep latest at bottom
-        async for msg in message.channel.history(limit = 5) :
-            if msg.author == self.bot.user :
-                await msg.delete()
-            
+        # Remove previous embed messages from bot to keep latest at bottom (only if message embed title matches sticky message title)
+        async for msg in message.channel.history(limit=5) :
+            if msg.author == self.bot.user and msg.embeds :
+                embed = msg.embeds[0]
+                if embed.title == self.thread_request_embed.title :
+                    await msg.delete()
+                    
         # Send sticky embeds at bottom
         await message.channel.send(embed=self.thread_request_embed)
 
