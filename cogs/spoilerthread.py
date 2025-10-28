@@ -23,7 +23,7 @@ class SpoilerThreadCog(commands.Cog) :
         tmdb.API_KEY = TMDB_KEY
         self.search = tmdb.Search()
         
-        self.request_spoiler_thread_id = config.spoiler_thread_channel
+        self.request_spoiler_thread_id = config.request_spoiler_thread_channel
     
         # Sticky messages
         self.thread_request_embed = Embed(
