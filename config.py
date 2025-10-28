@@ -21,6 +21,7 @@ newschannels = [int(x) for x in os.getenv("NEWSCHANNELS", "").split(",") if x]
 newspingrole = int(os.getenv("NEWSPINGROLE"))
 newspingbuffertime = int(os.getenv("NEWSPINGBUFFERTIME", 600))
 spoiler_thread_channel = int(os.getenv("SPOILER_THREAD_CHANNEL"))
+request_spoiler_thread_channel = int(os.getenv("REQUEST_SPOILER_THREAD_CHANNEL"))
 
 raidlogservers = {
     int(k): int(v, 16)
