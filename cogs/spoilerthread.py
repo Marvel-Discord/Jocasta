@@ -40,7 +40,10 @@ class SpoilerThreadCog(commands.Cog) :
     async def on_message(self, message) :
         """Checks for new messages in the spoiler thread request channel."""
         if message.author.bot :
-            return
+            if message.author == self.bot.user and message.embeds :
+                embed = message.embeds[0]
+                if embed.title == self.thread_request_embed.title :
+                    return
         
         if message.channel.id != self.request_spoiler_thread_id :
             return   
