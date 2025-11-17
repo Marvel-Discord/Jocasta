@@ -2,7 +2,7 @@ discord.py
 pytz~=2022.2.1
 asyncpg~=0.29.0
 python-dotenv~=1.1.1
-aiohttp~=3.10.11
+aiohttp~=3.12.14
 natsort~=8.3.1
 beautifulsoup4~=4.12.3
 tmdbsimple~=2.9.1
