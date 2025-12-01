@@ -90,7 +90,7 @@ class SpoilerThreadCog(commands.Cog):
     async def add_spoiler_thread(
         self, interaction: discord.Interaction, title: str, medium: str
     ):
-        await interaction.response.defer()
+        # await interaction.response.defer()
 
         response = await self.find_title(title, medium)
         if response is None:
