@@ -1,6 +1,6 @@
 import asyncio
 import asyncpg
-import datetime
+import datetime as _dt
 import enum
 import math
 import random
@@ -479,7 +479,7 @@ class PollsCog(commands.Cog, name="Polls"):
             #
             # print(bool(await conn.fetchrow("SELECT id FROM polls WHERE id = $1", 88375)))
             #
-            # await conn.execute(f"UPDATE polls SET time = $1, duration = $2 WHERE id = $3", discord.utils.utcnow(), datetime.timedelta(seconds=100), 63830)
+            # await conn.execute(f"UPDATE polls SET time = $1, duration = $2 WHERE id = $3", discord.utils.utcnow(), _dt.timedelta(seconds=100), 63830)
             #
             # a = await conn.fetchrow("SELECT * FROM polls WHERE id = $1", 63830)
             # print(type(a['time']), a['time'])
@@ -1030,7 +1030,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 times = []
                 for k, v in ranges.items():
                     try:
-                        times.append([datetime.timedelta(**{k: current}), v])
+                        times.append([_dt.timedelta(**{k: current}), v])
                     except OverflowError:
                         continue
 
@@ -1561,7 +1561,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 and not natural
             ):
                 print(
-                    f'[Polls Scheduler] Cancelled "start" scheduler at {k[1]} ({datetime.datetime.fromtimestamp(k[1], datetime.timezone.utc)})'
+                    f'[Polls Scheduler] Cancelled "start" scheduler at {k[1]} ({_dt.datetime.fromtimestamp(k[1], _dt.timezone.utc)})'
                 )
                 v.cancel()
 
@@ -2873,12 +2873,10 @@ class PollsCog(commands.Cog, name="Polls"):
             scheduled = None
 
         if schedule_time:
-            scheduled = datetime.datetime.fromtimestamp(
-                schedule_time, datetime.timezone.utc
-            )
+            scheduled = _dt.datetime.fromtimestamp(schedule_time, _dt.timezone.utc)
 
             if end_time:
-                end = datetime.datetime.fromtimestamp(end_time, datetime.timezone.utc)
+                end = _dt.datetime.fromtimestamp(end_time, _dt.timezone.utc)
                 duration = end_time - scheduled.timestamp()
 
                 if (end_time - schedule_time) < 0:
@@ -2918,7 +2916,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 await self.schedule_starts(timestamps=[schedule_time])
 
         if duration:
-            durationtimedelta = datetime.timedelta(seconds=duration)
+            durationtimedelta = _dt.timedelta(seconds=duration)
             if poll["published"]:
                 durationtimedelta = durationtimedelta + (
                     discord.utils.utcnow() - poll["time"]
@@ -3048,7 +3046,7 @@ class PollsCog(commands.Cog, name="Polls"):
         current = discord.utils.utcnow()
         end_time = duration if duration and duration >= current.timestamp() else None
         if end_time:
-            end = datetime.datetime.fromtimestamp(end_time, datetime.timezone.utc)
+            end = _dt.datetime.fromtimestamp(end_time, _dt.timezone.utc)
             duration = end_time - current.timestamp()
 
             if duration < 0:
@@ -3061,7 +3059,7 @@ class PollsCog(commands.Cog, name="Polls"):
         currenttime = discord.utils.utcnow()
 
         if duration:
-            durationtimedelta = datetime.timedelta(seconds=duration)
+            durationtimedelta = _dt.timedelta(seconds=duration)
             async with self.acquire_bot_conn() as conn:
                 await conn.execute(
                     "UPDATE polls SET time = $2, duration = $3 WHERE id = $1",
