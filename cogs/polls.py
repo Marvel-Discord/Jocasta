@@ -3906,7 +3906,7 @@ class PollsCog(commands.Cog, name="Polls"):
         if tag is None:
             return await interaction.followup.send("Please select an available tag.")
 
-        groups = {"Edit tag": ["name", "end_message", "colour", "num"]}
+        groups = {"Edit tag": ["name", "end_message", "colour", "current_num"]}
 
         items = {
             "name": self.EditItem(
