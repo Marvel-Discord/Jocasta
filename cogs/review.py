@@ -63,9 +63,14 @@ class ReviewCog(commands.Cog) :
                 await message.author.send(
                     f"Hey {message.author.display_name},\n\n{reason}\n"
                 )
-                await message.author.send(
-                    f"```\n{message.content[:1992]}\n```"
-                )
+                
+                MAX_LENGTH = 1990
+                content = message.content
+
+                for i in range(0, len(content), MAX_LENGTH):
+                    text = content[i:i + MAX_LENGTH]
+                    await message.author.send(f"```\n{text}\n```")
+                    
             except Forbidden:
                 # User has DMs disabled or blocked the bot
                 pass
