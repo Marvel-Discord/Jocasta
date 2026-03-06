@@ -235,7 +235,7 @@ class NewsCog(discord.ext.commands.Cog, name="News"):
     @commands.Cog.listener()
     async def on_member_join(self, member):
         if member.guild.id == self.newsguild.id:
-            await asyncio.sleep(10)
+            await asyncio.sleep(600)
             try:
                 await member.add_roles(self.newsrole)
             except Exception:
