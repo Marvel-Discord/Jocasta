@@ -235,7 +235,11 @@ class NewsCog(discord.ext.commands.Cog, name="News"):
     @commands.Cog.listener()
     async def on_member_join(self, member):
         if member.guild.id == self.newsguild.id:
-            await member.add_roles(self.newsrole)
+            await asyncio.sleep(10)
+            try:
+                await member.add_roles(self.newsrole)
+            except Exception:
+                pass
 
     @newspinggroup.command(name="button")
     @app_commands.describe(message="Message to send with button. (optional)")
