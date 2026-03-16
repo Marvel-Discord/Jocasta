@@ -22,6 +22,7 @@ class Jocasta(commands.Bot):
             "cogs.review",
             "cogs.spoilerthread",
             # 'cogs.betatesting'
+            "cogs.akihirocorrection",
         ]
 
         for extension in initial_extensions:
