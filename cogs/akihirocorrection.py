@@ -29,8 +29,13 @@ class AkihiroCog(commands.Cog) :
             1111141979376582729, # tykhe trade board
             1109727127051440148, # tykhe discussion
         }
-        self.blocked_forums = {}
-        self.allowed_forums = {}
+
+        # Manual overrides for blocking/allowing threads from parent channels/forums 
+        # Note that if you only allow/block a channel in the above lists, any created threads within that channel will still behave following normal rules
+        self.blocked_parents = {
+            1382732564610945194, # comic review corner
+        }
+        self.allowed_parents = {}
 
         # Cooldown duration in seconds
         self.cooldown_seconds = 60
@@ -49,13 +54,13 @@ class AkihiroCog(commands.Cog) :
         # Manual allowlist
         if channel.id in self.allowed_channels:
             return False
-        if isinstance(channel, Thread) and channel.parent and channel.parent.id in self.allowed_forums:
+        if isinstance(channel, Thread) and channel.parent and channel.parent.id in self.allowed_parents:
             return False
     
         # Manual blocklist
         if channel.id in self.blocked_channels:
             return True
-        if isinstance(channel, Thread) and channel.parent and channel.parent.id in self.blocked_forums:
+        if isinstance(channel, Thread) and channel.parent and channel.parent.id in self.blocked_parents:
             return True
         
         # @everyone permission check
