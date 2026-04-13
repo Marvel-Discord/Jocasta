@@ -11,8 +11,11 @@ class AkihiroCog(commands.Cog) :
         # Message
         self.akihiro_message = Embed(
             description=(
-                "Please do not use the name 'Daken' as this is actually a slur.\n"
-                "Instead, use alternatives such as Akihiro, Dark Wolverine, Hellverine or Fang."
+                "'Daken' is a derogatory slur used against people who aren't fully Japanese.\n"
+                "While you may not be familiar with this word's origin, it is often considered disrespectful and offensive.\n\n"
+                "The character, Daken, has numerous other names that Marvel comics prefer to use today,\n"
+                "including his given name, **Akihiro**, and 'superhero names' **Dark Wolverine**, **Hellverine**, and **Fang**.\n\n"
+                "We encourage you and the whole Marvel community to use these names instead of 'Daken'."
             ),
         )
 
@@ -32,10 +35,10 @@ class AkihiroCog(commands.Cog) :
 
         # Manual overrides for blocking/allowing threads from parent channels/forums 
         # Note that if you only allow/block a channel in the above lists, any created threads within that channel will still behave following normal rules
-        self.blocked_parents = {
+        self.blocked_parents = {}
+        self.allowed_parents = {
             1382732564610945194, # comic review corner
         }
-        self.allowed_parents = {}
 
         # Cooldown duration in seconds
         self.cooldown_seconds = 60
@@ -44,9 +47,7 @@ class AkihiroCog(commands.Cog) :
     def everyone_can_talk(self, ch, everyone_role):
         overwrite = ch.overwrites_for(everyone_role)
         
-        return (
-            overwrite.send_messages is not False
-        )
+        return (overwrite.send_messages is not False)
     
     def is_blocked_channel(self, channel):
         guild = channel.guild
