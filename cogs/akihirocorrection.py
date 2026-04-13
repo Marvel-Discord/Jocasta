@@ -11,9 +11,9 @@ class AkihiroCog(commands.Cog) :
         # Message
         self.akihiro_message = Embed(
             description=(
-                "'Daken' is a derogatory slur used against people who aren't fully Japanese. While you may not be familiar with this word's origin, it is often considered disrespectful and offensive.\n\n"
-                "The character, Daken, has numerous other names that Marvel comics prefer to use today, including his given name, **Akihiro**, and 'superhero names' **Dark Wolverine**, **Hellverine**, and **Fang**.\n\n"
-                "We encourage you and the whole Marvel community to use these names instead of 'Daken'."
+                "\"Daken\" is a derogatory slur used against people who aren't fully Japanese. While you may not be familiar with this word's origin, it is often considered disrespectful and offensive.\n\n"
+                "The character, Daken, has numerous other names that Marvel comics prefer to use today, including his given name, **Akihiro**, and \"superhero names\" **Dark Wolverine**, **Hellverine**, and **Fang**.\n\n"
+                "We encourage you and the whole Marvel community to use these names instead of \"Daken\"."
             ),
         )
 
