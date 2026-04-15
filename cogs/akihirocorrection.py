@@ -79,7 +79,7 @@ class AkihiroCog(commands.Cog) :
     async def on_message(self, message) :
         
         pattern = re.compile(
-            r"(d\W*a\W*k\W*e\W*n|d[\W_]*[a4@][\W_]*k[\W_]*[e3][\W_]*n)",
+            r"(.*daken.*)",
             re.IGNORECASE
         )
         
