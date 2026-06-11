@@ -3,13 +3,10 @@ from discord import Embed, Forbidden
 from discord import TextChannel, Thread
 import time
 import re
-import config
 
 class AkihiroCog(commands.Cog) :
     def __init__(self, bot) :
         self.bot = bot
-        
-        self.homeserver = congfig.homeserver
       
         # Message
         self.akihiro_message = Embed(
@@ -85,9 +82,6 @@ class AkihiroCog(commands.Cog) :
             r"(.*daken.*)",
             re.IGNORECASE
         )
-        
-        if message.guild.id != self.homeserver :
-            return
         
         if not pattern.search(message.content):
             return
