@@ -5,13 +5,11 @@ import time
 import re
 import config
 
-from config import *
-
 class AkihiroCog(commands.Cog) :
     def __init__(self, bot) :
         self.bot = bot
 
-        self.homeserver = homeserver
+        self.homeserver = config.homeserver
       
         # Message
         self.akihiro_message = Embed(
