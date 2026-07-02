@@ -23,7 +23,7 @@ class BirthdayCog(commands.Cog, name="Birthday"):
         except discord.HTTPException:
             pass
         finally:
-            self.bot.tasks["birthday"].pop(member.id, None)
+            self.bot.tasks.get("birthday", {}).pop(member.id, None)
 
     @app_commands.command(name="birthday")
     @app_commands.describe(member="The member whose birthday it is")
@@ -37,10 +37,13 @@ class BirthdayCog(commands.Cog, name="Birthday"):
                 "Birthday role not found in this server.", ephemeral=True
             )
 
-        if member.id in self.bot.tasks["birthday"]:
+        existing = self.bot.tasks["birthday"].get(member.id)
+        if existing and not existing.done():
             return await interaction.response.send_message(
                 f"{member.mention} already has an active birthday timer running.", ephemeral=True
             )
+        elif existing:
+            del self.bot.tasks["birthday"][member.id]
 
         if role in member.roles:
             return await interaction.response.send_message(
@@ -58,11 +61,11 @@ class BirthdayCog(commands.Cog, name="Birthday"):
     @birthday.error
     async def birthday_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message(
-                "You don't have permission to use this command.", ephemeral=True
-            )
+            msg = "You don't have permission to use this command."
         else:
-            await interaction.response.send_message("Something went wrong.", ephemeral=True)
+            msg = "Something went wrong."
+        responder = interaction.followup.send if interaction.response.is_done() else interaction.response.send_message
+        await responder(msg, ephemeral=True)
 
     async def cog_unload(self):
         for task in self.bot.tasks.get("birthday", {}).values():
