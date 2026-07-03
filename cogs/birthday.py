@@ -1,4 +1,5 @@
 import asyncio
+from typing import Optional
 
 import discord
 from discord import app_commands
@@ -100,10 +101,16 @@ class BirthdayCog(commands.Cog, name="Birthday"):
         await self._send_error(interaction, error)
 
     @birthday_group.command(name="remove")
-    @app_commands.describe(member="The member to remove the birthday role from")
-    @app_commands.checks.has_permissions(manage_roles=True)
-    async def birthday_remove(self, interaction: discord.Interaction, member: discord.Member):
-        """Removes the birthday role from a member early."""
+    @app_commands.describe(member="The member to remove the birthday role from (defaults to yourself)")
+    async def birthday_remove(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
+        """Removes the birthday role. Staff can remove it from anyone; members can remove it from themselves."""
+        member = member or interaction.user
+
+        if member != interaction.user and not interaction.user.guild_permissions.manage_roles:
+            return await interaction.response.send_message(
+                "You don't have permission to remove the birthday role from someone else.", ephemeral=True
+            )
+
         role = interaction.guild.get_role(BIRTHDAY_ROLE_ID)
         if role is None:
             return await interaction.response.send_message(
