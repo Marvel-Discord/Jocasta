@@ -16,9 +16,17 @@ class BirthdayCog(commands.Cog, name="Birthday"):
         self.bot.tasks["birthday"] = {}
         self.bot.loop.create_task(self.on_startup())
 
+    birthday_group = app_commands.Group(
+        name="birthday",
+        description="Birthday role commands",
+        guild_ids=[homeserver],
+    )
+
     async def on_startup(self):
         await self.bot.wait_until_ready()
         guild = self.bot.get_guild(homeserver)
+        if guild is None:
+            return
         role = guild.get_role(BIRTHDAY_ROLE_ID)
         if role is None:
             return
@@ -32,6 +40,8 @@ class BirthdayCog(commands.Cog, name="Birthday"):
         await asyncio.sleep(delay)
         guild = self.bot.get_guild(homeserver)
         try:
+            if guild is None:
+                return
             member = guild.get_member(member_id)
             if member:
                 role = guild.get_role(BIRTHDAY_ROLE_ID)
@@ -42,11 +52,21 @@ class BirthdayCog(commands.Cog, name="Birthday"):
         finally:
             self.bot.tasks.get("birthday", {}).pop(member_id, None)
 
-    @app_commands.command(name="birthday")
+    async def _send_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.MissingPermissions):
+            msg = "You don't have permission to use this command."
+        else:
+            msg = "Something went wrong."
+
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+
+    @birthday_group.command(name="add")
     @app_commands.describe(member="The member whose birthday it is")
-    @app_commands.guilds(homeserver)
     @app_commands.checks.has_permissions(manage_roles=True)
-    async def birthday(self, interaction: discord.Interaction, member: discord.Member):
+    async def birthday_add(self, interaction: discord.Interaction, member: discord.Member):
         """Assigns the birthday role to a member for 24 hours, then removes it automatically."""
         role = interaction.guild.get_role(BIRTHDAY_ROLE_ID)
         if role is None:
@@ -60,7 +80,7 @@ class BirthdayCog(commands.Cog, name="Birthday"):
                 f"{member.mention} already has an active birthday timer running.", ephemeral=True
             )
         elif existing:
-            self.bot.tasks["birthday"].pop(member.id, None)
+            self.bot.tasks.get("birthday", {}).pop(member.id, None)
 
         if role in member.roles:
             return await interaction.response.send_message(
@@ -75,17 +95,40 @@ class BirthdayCog(commands.Cog, name="Birthday"):
             f"Happy birthday, {member.mention}! \N{BIRTHDAY CAKE} The birthday role will be removed automatically in 24 hours."
         )
 
-    @birthday.error
-    async def birthday_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            msg = "You don't have permission to use this command."
-        else:
-            msg = "Something went wrong."
+    @birthday_add.error
+    async def birthday_add_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        await self._send_error(interaction, error)
 
-        if interaction.response.is_done():
-            await interaction.followup.send(msg, ephemeral=True)
-        else:
-            await interaction.response.send_message(msg, ephemeral=True)
+    @birthday_group.command(name="remove")
+    @app_commands.describe(member="The member to remove the birthday role from")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def birthday_remove(self, interaction: discord.Interaction, member: discord.Member):
+        """Removes the birthday role from a member early."""
+        role = interaction.guild.get_role(BIRTHDAY_ROLE_ID)
+        if role is None:
+            return await interaction.response.send_message(
+                "Birthday role not found in this server.", ephemeral=True
+            )
+
+        if role not in member.roles:
+            return await interaction.response.send_message(
+                f"{member.mention} doesn't have the birthday role.", ephemeral=True
+            )
+
+        await member.remove_roles(role, reason=f"Birthday role removed early by {interaction.user} ({interaction.user.id})")
+
+        existing = self.bot.tasks["birthday"].get(member.id)
+        if existing and not existing.done():
+            existing.cancel()
+        self.bot.tasks.get("birthday", {}).pop(member.id, None)
+
+        await interaction.response.send_message(
+            f"Removed the birthday role from {member.mention}.", ephemeral=True
+        )
+
+    @birthday_remove.error
+    async def birthday_remove_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        await self._send_error(interaction, error)
 
     async def cog_unload(self):
         for task in self.bot.tasks.get("birthday", {}).values():
