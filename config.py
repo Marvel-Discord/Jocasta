@@ -13,6 +13,7 @@ postgres_credentials = {
     "host": os.getenv("POSTGRES_HOST"),
     "port": int(os.getenv("POSTGRES_PORT", 5432)),
 }
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 global_slashies = os.getenv("GLOBAL_SLASHIES", "False").lower() == "true"
 database_listener_logs = os.getenv("DATABASE_LISTENER_LOGS", "True").lower() == "true"
 
