@@ -4,3 +4,6 @@ betatesting.py
 __pycache__/
 .idea/*
 .env
+.venv/
+.pytest_cache/
+.superpowers/

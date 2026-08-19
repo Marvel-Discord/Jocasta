@@ -8,6 +8,7 @@ class Jocasta(commands.Bot):
     async def setup_hook(self):
         initial_extensions = [
             "funcs.postgresql",
+            "funcs.redis",
             "cogs.owner",
             "cogs.polls",
             "cogs.time",

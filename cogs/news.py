@@ -187,50 +187,55 @@ class NewsCog(discord.ext.commands.Cog, name="News"):
                 f"*{t}*" for t in titles
             )
 
-            channelinfo = await self.bot.db.fetchrow(
-                "SELECT * FROM newschannelsping WHERE channel_id = $1", channel.id
-            )
-            if channelinfo:
-                if channelinfo["latest_message_id"]:
-                    try:
-                        oldmsg = await channel.fetch_message(
-                            channelinfo["latest_message_id"]
-                        )
-                    except NotFound:
-                        pass
+            key = f"jocasta:bot:newschannelsping:{channel.id}"
+            latest_message_id = None
+            if self.bot.redis:
+                try:
+                    latest_message_id = await self.bot.redis.get(key)
+                except Exception as e:
+                    print(f"[News] Failed to read from Redis: {e}")
+
+            if latest_message_id:
+                try:
+                    oldmsg = await channel.fetch_message(int(latest_message_id))
+                except NotFound:
+                    pass
+                except ValueError:
+                    print(
+                        f"[News] Invalid message_id in Redis for channel "
+                        f"{channel.id}: {latest_message_id!r}"
+                    )
+                except Exception as e:
+                    print(f"[News] Failed to fetch old message: {e}")
+                else:
+                    if (
+                        discord.utils.utcnow() - oldmsg.created_at
+                    ).total_seconds() >= newspingbuffertime:
+                        await oldmsg.delete()
                     else:
-                        if (
-                            discord.utils.utcnow() - oldmsg.created_at
-                        ).total_seconds() >= newspingbuffertime:
-                            await oldmsg.delete()
-                        else:
-                            current = [
-                                i.strip("*")
-                                for i in oldmsg.content.replace(
-                                    f"{self.newsrole.mention} ", ""
-                                ).split("\n")
-                            ]
-                            for t in titles:
-                                if t not in current:
-                                    current.append(t)
-                            new = formatmsg(self.newsrole.mention, current)
-                            await oldmsg.edit(content=new)
-                            return
-            else:
-                await self.bot.db.execute(
-                    "INSERT INTO newschannelsping (channel_id) VALUES ($1)", channel.id
-                )
+                        current = [
+                            i.strip("*")
+                            for i in oldmsg.content.replace(
+                                f"{self.newsrole.mention} ", ""
+                            ).split("\n")
+                        ]
+                        for t in titles:
+                            if t not in current:
+                                current.append(t)
+                        new = formatmsg(self.newsrole.mention, current)
+                        await oldmsg.edit(content=new)
+                        return
 
             msg = await channel.send(
                 formatmsg(self.newsrole.mention, titles),
                 view=self.PingRoleView(self.newsrole, "Add/Remove Ping Role"),
             )
 
-            await self.bot.db.execute(
-                "UPDATE newschannelsping SET latest_message_id = $2 WHERE channel_id = $1",
-                channel.id,
-                msg.id,
-            )
+            if self.bot.redis:
+                try:
+                    await self.bot.redis.set(key, str(msg.id))
+                except Exception as e:
+                    print(f"[News] Failed to write to Redis: {e}")
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
