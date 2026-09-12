@@ -1,9 +1,12 @@
+import json
+from unittest.mock import AsyncMock, MagicMock
+
 import httpx2
 import pytest
 from pydantic import ValidationError
 
 import funcs.polls_api as polls_api
-from funcs.polls_api import PollsAPIClient, PollsAPIError
+from funcs.polls_api import PollsAPIClient, PollsAPICog, PollsAPIError
 from funcs.polls_api_models import Poll, PollListResponse, Tag, VoteCounts
 
 
@@ -68,7 +71,7 @@ def make_client(handler) -> PollsAPIClient:
 
 async def test_get_poll_returns_validated_poll():
     async def handler(request):
-        assert request.url.path == "/polls/5"
+        assert request.url.path == "/bot/polls/5"
         return httpx2.Response(200, json=poll_payload(id=5, question="Hi"))
 
     client = make_client(handler)
@@ -81,7 +84,11 @@ async def test_get_poll_returns_validated_poll():
 
 
 async def test_cast_vote_returns_vote_counts():
+    seen = {}
+
     async def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
         return httpx2.Response(200, json={"votes": [1, 2, 0], "total_votes": 3})
 
     client = make_client(handler)
@@ -89,6 +96,8 @@ async def test_cast_vote_returns_vote_counts():
     assert isinstance(counts, VoteCounts)
     assert counts.votes == [1, 2, 0]
     assert counts.total_votes == 3
+    assert seen["path"] == "/bot/polls/1/vote"
+    assert seen["body"] == {"choice": 0}
 
 
 async def test_votes_null_raises_validation_error():
@@ -196,6 +205,21 @@ async def test_503_create_polls_is_not_retried(monkeypatch):
     assert len(calls) == 1
 
 
+async def test_503_crosspost_poll_is_not_retried(monkeypatch):
+    monkeypatch.setattr(polls_api, "BACKOFF_SCHEDULE", [0, 0])
+    calls = []
+
+    async def handler(request):
+        calls.append(request)
+        return httpx2.Response(503, json={"detail": "unavailable"})
+
+    client = make_client(handler)
+    with pytest.raises(PollsAPIError) as exc_info:
+        await client.crosspost_poll(1, 555)
+    assert exc_info.value.status == 503
+    assert len(calls) == 1
+
+
 async def test_network_error_retry_safe_op_is_retried(monkeypatch):
     monkeypatch.setattr(polls_api, "BACKOFF_SCHEDULE", [0, 0])
     calls = []
@@ -265,3 +289,98 @@ async def test_authorization_header_on_every_request():
     await client.end_poll(1)
     await client.publish_poll(1, 555, [])
     assert auth_values == ["Bearer test-token"] * 3
+
+
+async def test_create_polls_posts_wrapped_body_and_parses_polls():
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx2.Response(
+            201, json={"message": "Polls created successfully", "polls": [poll_payload(id=9)]}
+        )
+
+    client = make_client(handler)
+    polls = await client.create_polls([poll_payload()], user_id=42)
+    assert seen["path"] == "/bot/polls/create"
+    assert seen["body"] == {"polls": [poll_payload()]}
+    assert [p.id for p in polls] == [9]
+    assert all(isinstance(p, Poll) for p in polls)
+
+
+async def test_update_polls_posts_wrapped_body_and_parses_polls():
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx2.Response(
+            200, json={"message": "Polls updated successfully", "polls": [poll_payload(id=1, question="Updated")]}
+        )
+
+    client = make_client(handler)
+    polls = await client.update_polls([poll_payload(id=1)], user_id=42)
+    assert seen["path"] == "/bot/polls/update"
+    assert seen["body"] == {"polls": [poll_payload(id=1)]}
+    assert [p.question for p in polls] == ["Updated"]
+
+
+async def test_delete_polls_posts_poll_ids():
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx2.Response(200, json={"message": "Polls deleted successfully", "deletedCount": 2})
+
+    client = make_client(handler)
+    result = await client.delete_polls([1, 2], user_id=42)
+    assert seen["path"] == "/bot/polls/delete"
+    assert seen["body"] == {"pollIds": [1, 2]}
+    assert result == {"message": "Polls deleted successfully", "deletedCount": 2}
+
+
+async def test_update_by_tag_posts_tag_and_fields():
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx2.Response(
+            200, json={"message": "Polls updated successfully", "polls": [poll_payload(tag=3, question="New")]}
+        )
+
+    client = make_client(handler)
+    polls = await client.update_by_tag(3, {"question": "New"}, user_id=42)
+    assert seen["path"] == "/bot/polls/update-by-tag"
+    assert seen["body"] == {"tag": 3, "question": "New"}
+    assert [p.question for p in polls] == ["New"]
+
+
+async def test_get_guild_channels_uses_discord_proxy_path():
+    async def handler(request):
+        assert request.url.path == "/bot/discord/guilds/100/channels"
+        return httpx2.Response(200, json=[{"id": "5", "name": "general"}])
+
+    client = make_client(handler)
+    channels = await client.get_guild_channels(100)
+    assert channels == [{"id": "5", "name": "general"}]
+
+
+async def test_cog_load_exposes_bot_polls_api():
+    bot = MagicMock()
+    cog = PollsAPICog(bot)
+    await cog.cog_load()
+    assert isinstance(bot.polls_api, PollsAPIClient)
+    await bot.polls_api.close()
+
+
+async def test_cog_unload_closes_client():
+    bot = MagicMock()
+    client = MagicMock()
+    client.close = AsyncMock()
+    bot.polls_api = client
+    cog = PollsAPICog(bot)
+    await cog.cog_unload()
+    client.close.assert_awaited_once()

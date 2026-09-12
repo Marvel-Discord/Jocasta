@@ -1,6 +1,7 @@
 import asyncio
 
 import httpx2
+from discord.ext import commands
 
 from config import *
 from funcs.polls_api_models import (
@@ -59,11 +60,12 @@ class PollsAPIClient:
     async def _request(self, method, path, op_name, user_id=None, **kwargs) -> httpx2.Response:
         headers = self._headers(user_id)
         kwargs.setdefault("headers", {}).update(headers)
+        timeout = READ_TIMEOUT if method == "GET" else WRITE_TIMEOUT
         attempts = MAX_ATTEMPTS if op_name in RETRY_SAFE else 1
         last_exc = None
         for attempt in range(attempts):
             try:
-                response = await self._client.request(method, path, **kwargs)
+                response = await self._client.request(method, path, timeout=timeout, **kwargs)
             except httpx2.HTTPError as e:
                 last_exc = e
                 if attempt + 1 < attempts:
@@ -81,35 +83,35 @@ class PollsAPIClient:
     # Read ops (auto-retry):
 
     async def get_poll(self, poll_id: int) -> Poll:
-        response = await self._request("GET", f"/polls/{poll_id}", "get_poll")
+        response = await self._request("GET", f"/bot/polls/{poll_id}", "get_poll")
         return Poll.model_validate(response.json())
 
     async def list_polls(self, **params) -> PollListResponse:
-        response = await self._request("GET", "/polls", "list_polls", params=params)
+        response = await self._request("GET", "/bot/polls", "list_polls", params=params)
         return PollListResponse.model_validate(response.json())
 
     async def sync_polls(self, **params) -> PollListResponse:
-        response = await self._request("GET", "/polls/sync", "sync_polls", params=params)
+        response = await self._request("GET", "/bot/polls/sync", "sync_polls", params=params)
         return PollListResponse.model_validate(response.json())
 
     async def get_tags(self, **params) -> list[Tag]:
-        response = await self._request("GET", "/tags", "get_tags", params=params)
+        response = await self._request("GET", "/bot/tags", "get_tags", params=params)
         return [Tag.model_validate(item) for item in response.json()]
 
     async def get_tag(self, tag_id: int) -> Tag:
-        response = await self._request("GET", f"/tags/{tag_id}", "get_tag")
+        response = await self._request("GET", f"/bot/tags/{tag_id}", "get_tag")
         return Tag.model_validate(response.json())
 
     async def get_guild(self, guild_id: int) -> GuildSettings:
-        response = await self._request("GET", f"/guilds/{guild_id}", "get_guild")
+        response = await self._request("GET", f"/bot/guilds/{guild_id}", "get_guild")
         return GuildSettings.model_validate(response.json())
 
     async def get_guild_channels(self, guild_id: int) -> list[dict]:
-        response = await self._request("GET", f"/guilds/{guild_id}/channels", "get_guild_channels")
+        response = await self._request("GET", f"/bot/discord/guilds/{guild_id}/channels", "get_guild_channels")
         return response.json()
 
     async def get_guild_roles(self, guild_id: int) -> list[dict]:
-        response = await self._request("GET", f"/guilds/{guild_id}/roles", "get_guild_roles")
+        response = await self._request("GET", f"/bot/discord/guilds/{guild_id}/roles", "get_guild_roles")
         return response.json()
 
     async def health(self) -> bool:
@@ -119,59 +121,67 @@ class PollsAPIClient:
         except httpx2.HTTPError:
             return False
 
-    # Vote (idempotent, auto-retry):
+    # Vote (idempotent, auto-retry; user id travels in the header only):
 
     async def cast_vote(self, poll_id: int, user_id: int, choice: int | None) -> VoteCounts:
         response = await self._request(
             "POST",
-            f"/polls/{poll_id}/vote",
+            f"/bot/polls/{poll_id}/vote",
             "cast_vote",
             user_id=user_id,
-            json={"user_id": user_id, "choice": choice},
+            json={"choice": choice},
         )
         return VoteCounts.model_validate(response.json())
 
     # Writes (user_id required for revalidation):
 
     async def create_polls(self, polls: list[dict], user_id: int) -> list[Poll]:
-        response = await self._request("POST", "/polls", "create_polls", user_id=user_id, json=polls)
-        return [Poll.model_validate(item) for item in response.json()]
+        response = await self._request(
+            "POST", "/bot/polls/create", "create_polls", user_id=user_id, json={"polls": polls}
+        )
+        return [Poll.model_validate(item) for item in response.json()["polls"]]
 
     async def update_polls(self, polls: list[dict], user_id: int) -> list[Poll]:
-        response = await self._request("PUT", "/polls", "update_polls", user_id=user_id, json=polls)
-        return [Poll.model_validate(item) for item in response.json()]
+        response = await self._request(
+            "POST", "/bot/polls/update", "update_polls", user_id=user_id, json={"polls": polls}
+        )
+        return [Poll.model_validate(item) for item in response.json()["polls"]]
 
     async def delete_polls(self, poll_ids: list[int], user_id: int) -> dict:
         response = await self._request(
-            "DELETE", "/polls", "delete_polls", user_id=user_id, json={"ids": poll_ids}
+            "POST", "/bot/polls/delete", "delete_polls", user_id=user_id, json={"pollIds": poll_ids}
         )
         return response.json()
 
     async def update_by_tag(self, tag: int, fields: dict, user_id: int) -> list[Poll]:
         response = await self._request(
-            "PATCH", f"/tags/{tag}/polls", "update_by_tag", user_id=user_id, json=fields
+            "POST",
+            "/bot/polls/update-by-tag",
+            "update_by_tag",
+            user_id=user_id,
+            json={"tag": tag, **fields},
         )
-        return [Poll.model_validate(item) for item in response.json()]
+        return [Poll.model_validate(item) for item in response.json()["polls"]]
 
     # Lifecycle (system ops — no user header):
 
     async def publish_poll(self, poll_id: int, message_id: int, crosspost_ids: list[int]) -> Poll:
         response = await self._request(
             "POST",
-            f"/polls/{poll_id}/publish",
+            f"/bot/polls/{poll_id}/publish",
             "publish_poll",
             json={"message_id": message_id, "crosspost_message_ids": crosspost_ids},
         )
         return Poll.model_validate(response.json())
 
     async def end_poll(self, poll_id: int) -> Poll:
-        response = await self._request("POST", f"/polls/{poll_id}/end", "end_poll")
+        response = await self._request("POST", f"/bot/polls/{poll_id}/end", "end_poll")
         return Poll.model_validate(response.json())
 
     async def crosspost_poll(self, poll_id: int, message_id: int) -> Poll:
         response = await self._request(
             "POST",
-            f"/polls/{poll_id}/crosspost",
+            f"/bot/polls/{poll_id}/crosspost",
             "crosspost_poll",
             json={"message_id": message_id},
         )
@@ -181,9 +191,19 @@ class PollsAPIClient:
         await self._client.aclose()
 
 
+class PollsAPICog(commands.Cog, name="PollsAPI"):
+    """Manages the bot's polls API client and exposes it as `bot.polls_api`."""
+
+    def __init__(self, bot):
+        self.bot = bot
+
+    async def cog_load(self):
+        self.bot.polls_api = PollsAPIClient(polls_api_base_url, polls_api_token)
+
+    async def cog_unload(self):
+        if self.bot.polls_api:
+            await self.bot.polls_api.close()
+
+
 async def setup(bot):
-    bot.polls_api = PollsAPIClient(polls_api_base_url, polls_api_token)
-
-
-async def teardown(bot):
-    await bot.polls_api.close()
+    await bot.add_cog(PollsAPICog(bot))
