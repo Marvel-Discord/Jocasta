@@ -304,7 +304,7 @@ async def test_create_polls_posts_wrapped_body_and_parses_polls():
     client = make_client(handler)
     polls = await client.create_polls([poll_payload()], user_id=42)
     assert seen["path"] == "/bot/polls/create"
-    assert seen["body"] == {"polls": [poll_payload()]}
+    assert seen["body"] == [poll_payload()]
     assert [p.id for p in polls] == [9]
     assert all(isinstance(p, Poll) for p in polls)
 
@@ -322,7 +322,7 @@ async def test_update_polls_posts_wrapped_body_and_parses_polls():
     client = make_client(handler)
     polls = await client.update_polls([poll_payload(id=1)], user_id=42)
     assert seen["path"] == "/bot/polls/update"
-    assert seen["body"] == {"polls": [poll_payload(id=1)]}
+    assert seen["body"] == [poll_payload(id=1)]
     assert [p.question for p in polls] == ["Updated"]
 
 
