@@ -14,6 +14,8 @@ postgres_credentials = {
     "port": int(os.getenv("POSTGRES_PORT", 5432)),
 }
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+polls_api_base_url = os.getenv("POLLS_API_BASE_URL", "http://localhost:8000/api/v1")
+polls_api_token = os.getenv("POLLS_API_TOKEN", "")
 global_slashies = os.getenv("GLOBAL_SLASHIES", "False").lower() == "true"
 database_listener_logs = os.getenv("DATABASE_LISTENER_LOGS", "True").lower() == "true"
 
