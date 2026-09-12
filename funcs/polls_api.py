@@ -137,13 +137,13 @@ class PollsAPIClient:
 
     async def create_polls(self, polls: list[dict], user_id: int) -> list[Poll]:
         response = await self._request(
-            "POST", "/bot/polls/create", "create_polls", user_id=user_id, json={"polls": polls}
+            "POST", "/bot/polls/create", "create_polls", user_id=user_id, json=polls
         )
         return [Poll.model_validate(item) for item in response.json()["polls"]]
 
     async def update_polls(self, polls: list[dict], user_id: int) -> list[Poll]:
         response = await self._request(
-            "POST", "/bot/polls/update", "update_polls", user_id=user_id, json={"polls": polls}
+            "POST", "/bot/polls/update", "update_polls", user_id=user_id, json=polls
         )
         return [Poll.model_validate(item) for item in response.json()["polls"]]
 
