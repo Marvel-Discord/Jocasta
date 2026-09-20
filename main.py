@@ -9,6 +9,7 @@ class Jocasta(commands.Bot):
         initial_extensions = [
             "funcs.postgresql",
             "funcs.redis",
+            "funcs.polls_api",
             "cogs.owner",
             "cogs.polls",
             "cogs.time",
