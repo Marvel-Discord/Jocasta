@@ -15,6 +15,7 @@ from discord.app_commands.tree import _log
 from cogs.time import TimeCog
 from config import *
 from funcs.buttonpaginator import *
+from funcs.polls_api import PollsAPIError
 
 """
 x Create polls
@@ -1757,7 +1758,14 @@ class PollsCog(commands.Cog, name="Polls"):
             poll = await client.fetchpoll(poll["id"])
 
             if self.active:
-                await client.vote(poll, interaction.user, value)
+                try:
+                    await client.vote(poll, interaction.user, value)
+                except PollsAPIError:
+                    await interaction.followup.send(
+                        "Something went wrong, please try again", ephemeral=True
+                    )
+                    return
+
                 qid = (
                     f"*{poll['question']}* ({poll['id']})"
                     if poll["show_question"]
@@ -1879,45 +1887,31 @@ class PollsCog(commands.Cog, name="Polls"):
             self.bot.add_view(view)
 
     async def vote(self, poll, user, choice=None):
-        async with self.acquire_bot_conn() as conn:
-            vote = await conn.fetchrow(
-                "SELECT * FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
-                user.id,
-                poll["id"],
+        if (
+            (poll["active"] or poll["persistent"])
+            and poll["published"]
+            and choice is not None
+        ):
+            api_choice = None if choice == -1 else choice
+            counts = await self.bot.polls_api.cast_vote(
+                poll["id"], user.id, api_choice
             )
 
-            if (
-                (poll["active"] or poll["persistent"])
-                and poll["published"]
-                and choice is not None
-            ):
-                if choice == -1:
-                    await conn.execute(
-                        "DELETE FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
-                        user.id,
-                        poll["id"],
-                    )
-                else:
-                    if not vote:
-                        await conn.execute(
-                            "INSERT INTO pollsvotes (id, user_id, poll_id, choice) VALUES ($1, $2, $3, $4)",
-                            user.id + poll["id"],
-                            user.id,
-                            poll["id"],
-                            choice,
-                        )
-                    else:
-                        await conn.execute(
-                            "UPDATE pollsvotes SET choice = $1 WHERE user_id = $2 AND poll_id = $3",
-                            choice,
-                            user.id,
-                            poll["id"],
-                        )
+            poll = dict(poll)
+            poll["votes"] = counts.votes
+            poll["total_votes"] = counts.total_votes
 
-                await self.updatepollmessage(poll)
+            await self.updatepollmessage(poll)
 
-                return choice
-            else:
+            return choice
+        else:
+            async with self.acquire_bot_conn() as conn:
+                vote = await conn.fetchrow(
+                    "SELECT * FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
+                    user.id,
+                    poll["id"],
+                )
+
                 if vote:
                     return vote["choice"]
                 else:
