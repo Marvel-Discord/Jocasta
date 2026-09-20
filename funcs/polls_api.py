@@ -1,4 +1,5 @@
 import asyncio
+from enum import StrEnum, auto
 
 import httpx2
 from discord.ext import commands
@@ -12,18 +13,44 @@ from funcs.polls_api_models import (
     VoteCounts,
 )
 
-RETRYABLE_STATUS = {502, 503, 504}
 MAX_ATTEMPTS = 3
 BACKOFF_SCHEDULE = [0.5, 1.0]
+RETRYABLE_STATUS = {502, 503, 504}
 READ_TIMEOUT = 10.0
 WRITE_TIMEOUT = 15.0
 
-RETRY_SAFE = {
-    "get_poll", "list_polls", "sync_polls", "get_tags", "get_tag",
-    "get_guild", "get_guild_channels", "get_guild_roles",
-    "cast_vote", "publish_poll", "end_poll",
-    "update_polls", "delete_polls", "update_by_tag",
-}
+
+class Op(StrEnum):
+    GET_POLL = auto()
+    LIST_POLLS = auto()
+    SYNC_POLLS = auto()
+    GET_TAGS = auto()
+    GET_TAG = auto()
+    GET_GUILD = auto()
+    GET_GUILD_CHANNELS = auto()
+    GET_GUILD_ROLES = auto()
+    HEALTH = auto()
+    CAST_VOTE = auto()
+    CREATE_POLLS = auto()
+    UPDATE_POLLS = auto()
+    DELETE_POLLS = auto()
+    UPDATE_BY_TAG = auto()
+    PUBLISH_POLL = auto()
+    END_POLL = auto()
+    CROSSPOST_POLL = auto()
+
+
+RETRY_SAFE = frozenset({
+    Op.GET_POLL, Op.LIST_POLLS, Op.SYNC_POLLS, Op.GET_TAGS, Op.GET_TAG,
+    Op.GET_GUILD, Op.GET_GUILD_CHANNELS, Op.GET_GUILD_ROLES,
+    Op.CAST_VOTE, Op.PUBLISH_POLL, Op.END_POLL,
+    Op.UPDATE_POLLS, Op.DELETE_POLLS, Op.UPDATE_BY_TAG,
+})
+
+READ_OPS = frozenset({
+    Op.GET_POLL, Op.LIST_POLLS, Op.SYNC_POLLS, Op.GET_TAGS, Op.GET_TAG,
+    Op.GET_GUILD, Op.GET_GUILD_CHANNELS, Op.GET_GUILD_ROLES, Op.HEALTH,
+})
 
 
 class PollsAPIError(Exception):
@@ -57,11 +84,11 @@ class PollsAPIClient:
             return {}
         return {"X-Discord-User-Id": str(user_id)}
 
-    async def _request(self, method, path, op_name, user_id=None, **kwargs) -> httpx2.Response:
+    async def _request(self, method, path, op, user_id=None, **kwargs) -> httpx2.Response:
         headers = self._headers(user_id)
         kwargs.setdefault("headers", {}).update(headers)
-        timeout = READ_TIMEOUT if method == "GET" else WRITE_TIMEOUT
-        attempts = MAX_ATTEMPTS if op_name in RETRY_SAFE else 1
+        timeout = READ_TIMEOUT if op in READ_OPS else WRITE_TIMEOUT
+        attempts = MAX_ATTEMPTS if op in RETRY_SAFE else 1
         last_exc = None
         for attempt in range(attempts):
             try:
@@ -83,35 +110,35 @@ class PollsAPIClient:
     # Read ops (auto-retry):
 
     async def get_poll(self, poll_id: int) -> Poll:
-        response = await self._request("GET", f"/bot/polls/{poll_id}", "get_poll")
+        response = await self._request("GET", f"/bot/polls/{poll_id}", Op.GET_POLL)
         return Poll.model_validate(response.json())
 
     async def list_polls(self, **params) -> PollListResponse:
-        response = await self._request("GET", "/bot/polls", "list_polls", params=params)
+        response = await self._request("GET", "/bot/polls", Op.LIST_POLLS, params=params)
         return PollListResponse.model_validate(response.json())
 
     async def sync_polls(self, **params) -> PollListResponse:
-        response = await self._request("GET", "/bot/polls/sync", "sync_polls", params=params)
+        response = await self._request("GET", "/bot/polls/sync", Op.SYNC_POLLS, params=params)
         return PollListResponse.model_validate(response.json())
 
     async def get_tags(self, **params) -> list[Tag]:
-        response = await self._request("GET", "/bot/tags", "get_tags", params=params)
+        response = await self._request("GET", "/bot/tags", Op.GET_TAGS, params=params)
         return [Tag.model_validate(item) for item in response.json()]
 
     async def get_tag(self, tag_id: int) -> Tag:
-        response = await self._request("GET", f"/bot/tags/{tag_id}", "get_tag")
+        response = await self._request("GET", f"/bot/tags/{tag_id}", Op.GET_TAG)
         return Tag.model_validate(response.json())
 
     async def get_guild(self, guild_id: int) -> GuildSettings:
-        response = await self._request("GET", f"/bot/guilds/{guild_id}", "get_guild")
+        response = await self._request("GET", f"/bot/guilds/{guild_id}", Op.GET_GUILD)
         return GuildSettings.model_validate(response.json())
 
     async def get_guild_channels(self, guild_id: int) -> list[dict]:
-        response = await self._request("GET", f"/bot/discord/guilds/{guild_id}/channels", "get_guild_channels")
+        response = await self._request("GET", f"/bot/discord/guilds/{guild_id}/channels", Op.GET_GUILD_CHANNELS)
         return response.json()
 
     async def get_guild_roles(self, guild_id: int) -> list[dict]:
-        response = await self._request("GET", f"/bot/discord/guilds/{guild_id}/roles", "get_guild_roles")
+        response = await self._request("GET", f"/bot/discord/guilds/{guild_id}/roles", Op.GET_GUILD_ROLES)
         return response.json()
 
     async def health(self) -> bool:
@@ -127,7 +154,7 @@ class PollsAPIClient:
         response = await self._request(
             "POST",
             f"/bot/polls/{poll_id}/vote",
-            "cast_vote",
+            Op.CAST_VOTE,
             user_id=user_id,
             json={"choice": choice},
         )
@@ -137,19 +164,19 @@ class PollsAPIClient:
 
     async def create_polls(self, polls: list[dict], user_id: int) -> list[Poll]:
         response = await self._request(
-            "POST", "/bot/polls/create", "create_polls", user_id=user_id, json=polls
+            "POST", "/bot/polls/create", Op.CREATE_POLLS, user_id=user_id, json=polls
         )
         return [Poll.model_validate(item) for item in response.json()["polls"]]
 
     async def update_polls(self, polls: list[dict], user_id: int) -> list[Poll]:
         response = await self._request(
-            "POST", "/bot/polls/update", "update_polls", user_id=user_id, json=polls
+            "POST", "/bot/polls/update", Op.UPDATE_POLLS, user_id=user_id, json=polls
         )
         return [Poll.model_validate(item) for item in response.json()["polls"]]
 
     async def delete_polls(self, poll_ids: list[int], user_id: int) -> dict:
         response = await self._request(
-            "POST", "/bot/polls/delete", "delete_polls", user_id=user_id, json={"pollIds": poll_ids}
+            "POST", "/bot/polls/delete", Op.DELETE_POLLS, user_id=user_id, json={"pollIds": poll_ids}
         )
         return response.json()
 
@@ -157,7 +184,7 @@ class PollsAPIClient:
         response = await self._request(
             "POST",
             "/bot/polls/update-by-tag",
-            "update_by_tag",
+            Op.UPDATE_BY_TAG,
             user_id=user_id,
             json={"tag": tag, **fields},
         )
@@ -169,20 +196,20 @@ class PollsAPIClient:
         response = await self._request(
             "POST",
             f"/bot/polls/{poll_id}/publish",
-            "publish_poll",
+            Op.PUBLISH_POLL,
             json={"message_id": message_id, "crosspost_message_ids": crosspost_ids},
         )
         return Poll.model_validate(response.json())
 
     async def end_poll(self, poll_id: int) -> Poll:
-        response = await self._request("POST", f"/bot/polls/{poll_id}/end", "end_poll")
+        response = await self._request("POST", f"/bot/polls/{poll_id}/end", Op.END_POLL)
         return Poll.model_validate(response.json())
 
     async def crosspost_poll(self, poll_id: int, message_id: int) -> Poll:
         response = await self._request(
             "POST",
             f"/bot/polls/{poll_id}/crosspost",
-            "crosspost_poll",
+            Op.CROSSPOST_POLL,
             json={"message_id": message_id},
         )
         return Poll.model_validate(response.json())
