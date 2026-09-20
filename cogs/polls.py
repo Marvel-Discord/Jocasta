@@ -1755,7 +1755,7 @@ class PollsCog(commands.Cog, name="Polls"):
         async def vote(self, client, poll, interaction, value):
             await interaction.response.defer()
 
-            poll = await client.fetchpoll(poll["id"])
+            poll = dict(await client.fetchpoll(poll["id"]))
 
             if self.active:
                 try:
@@ -1886,7 +1886,7 @@ class PollsCog(commands.Cog, name="Polls"):
             )
             self.bot.add_view(view)
 
-    async def vote(self, poll, user, choice=None):
+    async def vote(self, poll: dict, user, choice=None):
         if (
             (poll["active"] or poll["persistent"])
             and poll["published"]
@@ -1897,7 +1897,6 @@ class PollsCog(commands.Cog, name="Polls"):
                 poll["id"], user.id, api_choice
             )
 
-            poll = dict(poll)
             poll["votes"] = counts.votes
             poll["total_votes"] = counts.total_votes
 
