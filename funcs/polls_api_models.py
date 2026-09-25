@@ -60,6 +60,13 @@ class VoteCounts(BaseModel):
     total_votes: int
 
 
+class UserVote(BaseModel):
+    id: int
+    user_id: int
+    poll_id: int
+    choice: int
+
+
 class PollListResponse(BaseModel):
     data: list[Poll]
     meta: dict
