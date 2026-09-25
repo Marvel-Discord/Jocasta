@@ -2802,7 +2802,7 @@ class PollsCog(commands.Cog, name="Polls"):
         schedule_time="Scheduled time for the poll to start. Given in Epoch timestamp (UTC). Leave empty if published, or want to leave the scheduled date unchanged. Set to -1 to clear.",
         duration="Duration for poll to run. Can pass Epoch timestamp (UTC) as the ending time instead. Can give number of seconds as raw value. Set to -1 to clear.",
     )
-    async def pollschedule(
+    async def poll_schedule(
         self,
         interaction: discord.Interaction,
         poll_id: int,
@@ -2881,10 +2881,17 @@ class PollsCog(commands.Cog, name="Polls"):
                 )
 
         if not poll["published"] and (schedule_time != poll["time"] or clearschedule):
-            async with self.acquire_bot_conn() as conn:
-                await conn.execute(
-                    "UPDATE polls SET time = $1 WHERE id = $2", scheduled, poll_id
-                )
+            await self.bot.polls_api.update_polls(
+                [
+                    {
+                        "id": poll_id,
+                        "question": poll["question"],
+                        "choices": poll["choices"],
+                        "start_time": scheduled.isoformat() if scheduled else None,
+                    }
+                ],
+                interaction.user.id,
+            )
 
             if poll["time"]:
                 if not clearschedule:
@@ -2897,19 +2904,23 @@ class PollsCog(commands.Cog, name="Polls"):
                 await self.schedule_starts(timestamps=[schedule_time])
 
         if duration:
-            durationtimedelta = _dt.timedelta(seconds=duration)
-            if poll["published"]:
-                durationtimedelta = durationtimedelta + (
-                    discord.utils.utcnow() - poll["time"]
-                )
             if duration == -1:
-                durationtimedelta = None
-            async with self.acquire_bot_conn() as conn:
-                await conn.execute(
-                    "UPDATE polls SET duration = $1 WHERE id = $2",
-                    durationtimedelta,
-                    poll_id,
-                )
+                end = None
+            elif poll["published"]:
+                end = discord.utils.utcnow() + _dt.timedelta(seconds=duration)
+            else:
+                end = poll["time"] + _dt.timedelta(seconds=duration)
+            await self.bot.polls_api.update_polls(
+                [
+                    {
+                        "id": poll_id,
+                        "question": poll["question"],
+                        "choices": poll["choices"],
+                        "end_time": end.isoformat() if end else None,
+                    }
+                ],
+                interaction.user.id,
+            )
 
             await self.schedule_ends(poll_ids=[poll_id])
 
@@ -2948,7 +2959,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         return await interaction.followup.send(embed=embed)
 
-    @pollschedule.autocomplete("poll_id")
+    @poll_schedule.autocomplete("poll_id")
     async def pollschedule_autocomplete_poll_id(
         self, interaction: discord.Interaction, current: int
     ):
@@ -2976,13 +2987,13 @@ class PollsCog(commands.Cog, name="Polls"):
         ]
         return choices
 
-    @pollschedule.autocomplete("duration")
+    @poll_schedule.autocomplete("duration")
     async def pollschedule_autocomplete_duration(
         self, interaction: discord.Interaction, current: float
     ):
         return await self.autocomplete_duration(interaction, current, clear=-1)
 
-    @pollschedule.autocomplete("schedule_time")
+    @poll_schedule.autocomplete("schedule_time")
     async def pollschedule_autocomplete_schedule_time(
         self, interaction: discord.Interaction, current: int
     ):
