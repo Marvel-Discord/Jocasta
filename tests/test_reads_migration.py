@@ -119,7 +119,7 @@ async def test_fetch_all_polls_composes_join_shape_and_filters_published():
 
     everything = await cog.fetch_all_polls(show_unpublished=True)
     assert [p["id"] for p in everything] == [1, 2]
-    cog.bot.polls_api.sync_all_polls.assert_awaited_with(guildId=288896937074360321)
+    cog.bot.polls_api.sync_all_polls.assert_awaited_with(288896937074360321)
 
 
 def test_polls_guild_id_prefers_guild_ids_attr():
@@ -286,8 +286,8 @@ async def test_pollsme_votes_and_polls_come_from_api():
 
     await cog.pollsme(interaction)
     cog.bot.polls_api.sync_all_polls.assert_awaited_once()
+    assert cog.bot.polls_api.sync_all_polls.await_args.args[0] == 100
     kwargs = cog.bot.polls_api.sync_all_polls.await_args.kwargs
-    assert kwargs["guildId"] == 100
     assert kwargs["ids"] == "42"
 
 
@@ -318,7 +318,7 @@ async def test_pollsme_show_unvoted_composes_tag_and_guild_keys():
 
     await cog.pollsme(make_interaction(), show_unvoted=True)
 
-    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(guildId=100, live="true")
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(100, live="true")
     assert seen[0]["channel_id"] == 200
     assert seen[0]["fallback_channel_id"] == 303
 
@@ -342,7 +342,7 @@ async def test_admin_sync_skips_update_votes_task():
     cog.schedule_starts = AsyncMock()
     cog.schedule_ends = AsyncMock()
     cog.on_startup_self_assign = AsyncMock()
-    cog.do_updatepollmessage = AsyncMock()
+    cog.do_update_poll_message = AsyncMock()
 
     interaction = MagicMock()
     interaction.response.defer = AsyncMock()
