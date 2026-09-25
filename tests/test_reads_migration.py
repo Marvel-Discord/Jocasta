@@ -130,6 +130,30 @@ def test_polls_guild_id_prefers_guild_ids_attr():
     assert cog.polls_guild_id() == 999
 
 
+def test_searchmatches_passes_when_no_filters_set():
+    cog = make_cog()
+    poll = make_poll_model(published=True, active=True)
+
+    assert cog.searchmatches(poll, 1, None, None, "-1") is True
+    assert cog.searchmatches(poll, 1, True, True, "-1") is True
+
+
+def test_searchmatches_filters_published_and_active():
+    cog = make_cog()
+    poll = make_poll_model(published=True, active=True)
+
+    assert cog.searchmatches(poll, 1, False, None, "-1") is False
+    assert cog.searchmatches(poll, 1, None, False, "-1") is False
+    assert cog.searchmatches(poll, 1, False, False, "-1") is False
+
+
+def test_searchmatches_notag_matches_nothing_for_tagged_polls():
+    cog = make_cog()
+    poll = make_poll_model(tag=1)
+
+    assert cog.searchmatches(poll, -1, None, None, "-1") is False
+
+
 from funcs.polls_api import PollsAPIError
 
 
