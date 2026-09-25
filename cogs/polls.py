@@ -1411,9 +1411,11 @@ class PollsCog(commands.Cog, name="Polls"):
 
         return final
 
-    async def endpoll(self, poll_id, *, set_time=False, lock_thread=True, natural=True):
+    async def end_poll(
+        self, poll_id, *, end_now=False, lock_thread=True, natural=True, user_id=None
+    ):
 
-        if set_time:
+        if end_now:
             current_time = discord.utils.utcnow()
 
         poll = await self.fetch_poll(poll_id)
@@ -1425,16 +1427,20 @@ class PollsCog(commands.Cog, name="Polls"):
             if tag["channel_id"]:
                 channel_id = tag["channel_id"]
 
-        async with self.acquire_bot_conn() as conn:
-            await conn.execute(
-                "UPDATE polls SET active = $2 WHERE id = $1", poll["id"], False
+        if end_now:
+            await self.bot.polls_api.update_polls(
+                [
+                    {
+                        "id": poll_id,
+                        "question": poll["question"],
+                        "choices": poll["choices"],
+                        "end_time": current_time.isoformat(),
+                    }
+                ],
+                user_id,
             )
-
-            if set_time:
-                duration = current_time - poll["time"]
-                await conn.execute(
-                    "UPDATE polls SET duration = $2 WHERE id = $1", poll["id"], duration
-                )
+        else:
+            await self.bot.polls_api.end_poll(poll_id)
 
         if poll["duration"]:
             await self.schedule_ends(poll_ids=[poll["id"]], natural=natural)
@@ -1495,7 +1501,7 @@ class PollsCog(commands.Cog, name="Polls"):
             await self.split_start_polls(polls, natural=True)
         else:
             for p in polls:
-                await self.endpoll(p, natural=True)
+                await self.end_poll(p, natural=True)
 
         print(
             f"[Polls Scheduler] ({', '.join(str(i) for i in polls)}) Successfully {'started' if start else 'ended'} poll"
@@ -3048,7 +3054,7 @@ class PollsCog(commands.Cog, name="Polls"):
     @poll_manager_only()
     @valid_guild_only()
     @app_commands.describe(poll_id="5-digit ID of the poll to end.")
-    async def pollend(self, interaction: discord.Interaction, poll_id: int):
+    async def poll_end(self, interaction: discord.Interaction, poll_id: int):
         """Ends the voting for a poll question."""
 
         await interaction.response.defer()
@@ -3065,11 +3071,11 @@ class PollsCog(commands.Cog, name="Polls"):
         if not poll["active"]:
             return await interaction.followup.send(f"This poll is not active!")
 
-        await self.endpoll(poll["id"], set_time=True)
+        await self.end_poll(poll["id"], end_now=True, user_id=interaction.user.id)
 
         await interaction.followup.send(f"Successfully ended the poll!")
 
-    @pollend.autocomplete("poll_id")
+    @poll_end.autocomplete("poll_id")
     async def pollend_autocomplete_poll_id(
         self, interaction: discord.Interaction, current: int
     ):

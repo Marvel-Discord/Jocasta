@@ -22,6 +22,7 @@ def make_cog():
     cog.polladminsync = PollsCog.polladminsync._callback.__get__(cog)
     cog.poll_schedule = PollsCog.poll_schedule._callback.__get__(cog)
     cog.poll_start = PollsCog.poll_start._callback.__get__(cog)
+    cog.poll_end = PollsCog.poll_end._callback.__get__(cog)
     return cog
 
 
@@ -321,3 +322,74 @@ async def test_poll_start_with_duration_includes_end_time():
     assert body["end_time"] is not None
     parsed = datetime.fromisoformat(body["end_time"])
     assert timedelta(hours=1) >= (parsed - datetime.now(timezone.utc)) >= timedelta(minutes=59)
+
+
+def make_threadless_guilds():
+    guild = MagicMock()
+    guild.get_channel_or_thread = MagicMock(return_value=None)
+    cog_guild = MagicMock()
+    cog_guild.id = 100
+    guild.return_value = guild
+    return [guild]
+
+
+async def test_end_poll_natural_uses_lifecycle_endpoint():
+    cog = make_cog()
+    poll_dict = cog.poll_dict(make_poll_model())
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
+    cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
+    cog.bot.polls_api.end_poll = AsyncMock(return_value=poll_dict)
+    cog.schedule_ends = AsyncMock()
+    cog.updatepollmessage = AsyncMock()
+    cog.bot.get_channel = MagicMock(return_value=make_channel(300))
+    cog.bot.get_guild = MagicMock(side_effect=lambda gid: MagicMock(get_channel_or_thread=MagicMock(return_value=None)))
+
+    await cog.end_poll(42)
+
+    cog.bot.polls_api.end_poll.assert_awaited_once_with(42)
+    cog.updatepollmessage.assert_awaited_once()
+
+
+async def test_end_poll_early_end_overwrites_end_time_via_update():
+    cog = make_cog()
+    poll_dict = cog.poll_dict(
+        make_poll_model(end_time=datetime(2030, 1, 1, tzinfo=timezone.utc))
+    )
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
+    cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
+    cog.bot.polls_api.end_poll = AsyncMock()
+    cog.bot.polls_api.update_polls = AsyncMock(return_value=[poll_dict])
+    cog.schedule_ends = AsyncMock()
+    cog.updatepollmessage = AsyncMock()
+    cog.bot.get_channel = MagicMock(return_value=make_channel(300))
+    cog.bot.get_guild = MagicMock(side_effect=lambda gid: MagicMock(get_channel_or_thread=MagicMock(return_value=None)))
+
+    await cog.end_poll(42, end_now=True, user_id=1234)
+
+    cog.bot.polls_api.end_poll.assert_not_awaited()
+    cog.bot.polls_api.update_polls.assert_awaited_once()
+    body = cog.bot.polls_api.update_polls.await_args.args[0][0]
+    assert body["id"] == 42
+    assert body["question"] == "Best hero?"
+    assert body["choices"] == ["A", "B"]
+    assert body["end_time"] is not None
+    assert cog.bot.polls_api.update_polls.await_args.args[1] == 1234
+
+
+async def test_poll_end_command_passes_user_for_early_end():
+    cog = make_cog()
+    poll_dict = cog.poll_dict(make_poll_model(active=True))
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
+    cog.end_poll = AsyncMock()
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_end(interaction, 42)
+
+    cog.end_poll.assert_awaited_once_with(42, end_now=True, user_id=1234)
