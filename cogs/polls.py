@@ -277,7 +277,10 @@ class PollsCog(commands.Cog, name="Polls"):
         #         return await conn.fetch("SELECT * FROM polls WHERE question ~* $1", keyword)
         #     else:
         #         return await conn.fetch("SELECT * FROM polls WHERE question ~* $1 AND published = true", keyword)
-        results = await self.fetchallpolls(showunpublished)
+        if showunpublished:
+            results = await self.fetchallpolls(showunpublished)
+        else:
+            results = await self.fetchallpolls()
 
         return self.keywordsearch(keyword, results)
 
@@ -1874,11 +1877,7 @@ class PollsCog(commands.Cog, name="Polls"):
         return self.PollView(self, poll, **kwargs)
 
     async def on_startup_buttons(self):
-        async with self.acquire_bot_conn() as conn:
-            polls = await conn.fetch(
-                "SELECT * FROM polls NATURAL LEFT JOIN pollstags WHERE published = $1",
-                True,
-            )
+        polls = await self.fetchallpolls()
         polls.sort(key=lambda x: discord.utils.utcnow() - x["time"])
         polls.sort(key=lambda x: not x["active"])
 
@@ -1986,11 +1985,13 @@ class PollsCog(commands.Cog, name="Polls"):
                     )
 
     async def on_startup_selfassign(self):
-        async with self.acquire_bot_conn() as conn:
-            tags = await conn.fetch(
-                "SELECT * FROM pollstags WHERE end_message_self_assign = $1 and cardinality(end_message_role_ids) <> 0",
-                True,
-            )
+        tags = await self.fetchalltags(end_message_self_assign="true")
+        tags = [
+            t
+            for t in tags
+            if t["end_message_self_assign"]
+            and len(t["end_message_role_ids"]) != 0
+        ]
 
         for t in tags:
             view = self.SelfAssignRoleView(t["end_message_role_ids"])
@@ -3142,10 +3143,8 @@ class PollsCog(commands.Cog, name="Polls"):
             poll = await self.fetchpoll(poll_id)
 
             if not poll:
-                async with self.acquire_bot_conn() as conn:
-                    poll = await conn.fetchrow(
-                        "SELECT * FROM polls WHERE num = $1", poll_id
-                    )
+                matches = await self.bot.polls_api.sync_all_polls(guildId=interaction.guild_id, num=poll_id)
+                poll = self.polldict(matches[0]) if matches else None
 
             managerperms = await self.hasmanagerperms(interaction)
 
@@ -3188,50 +3187,36 @@ class PollsCog(commands.Cog, name="Polls"):
                 else:
                     tag = tag["tag"]
 
-            queries = []
-            values = []
+            params = {}
             text = []
-            # keyword, tag, published
             if keyword:
-                # queries.append("(question ~* ${} OR thread_question ~* ${} OR ${} ~! ANY(choices))")
-                # values += [keyword, keyword, keyword]
                 text.append(f"Keyword search: `{keyword}`")
             if tag:
                 if tag != int(notag):
-                    queries.append("tag = ${}")
-                    values.append(tag)
+                    params["tag"] = tag
                     text.append(f"Tag: `{await self.tagname(tag)}`")
                 else:
-                    queries.append("tag IS NULL")
                     text.append(f"Tag: None")
             if published is not None:
-                queries.append("published = ${}")
-                values.append(published)
                 text.append(f"Published? `{published}`")
             if active is not None:
-                queries.append("active = ${}")
-                values.append(active)
                 text.append(f"Active? `{active}`")
             if sort:
                 text.append(f"Sorted by `{sort.name}`")
 
             guildid = await self.fetchguildid(interaction)
 
-            try:
-                async with self.acquire_bot_conn() as conn:
-                    if not queries:
-                        polls = await conn.fetch("SELECT * FROM polls")
-                    else:
-                        polls = await conn.fetch(
-                            f"SELECT * FROM polls WHERE {' AND '.join(queries).format(*list(range(1, len(values) + 1)))}",
-                            *values,
-                        )
-                if keyword:
-                    polls = self.keywordsearch(keyword, polls)
-            except asyncpg.exceptions.InvalidRegularExpressionError:
-                return await interaction.followup.send(
-                    f"Your keyword input `{keyword}` seems to have failed. Please make sure to only search using alphanumeric characters."
-                )
+            polls = await self.bot.polls_api.sync_all_polls(guildId=guildid, **params)
+            polls = [self.polldict(p) for p in polls]
+
+            if tag == int(notag):
+                polls = [poll for poll in polls if poll["tag"] is None]
+            if published is not None:
+                polls = [poll for poll in polls if poll["published"] == published]
+            if active is not None:
+                polls = [poll for poll in polls if poll["active"] == active]
+            if keyword:
+                polls = self.keywordsearch(keyword, polls)
 
             polls = [i for i in polls if await self.canview(i, interaction.guild_id)]
             if not await self.hasmanagerperms(interaction):
@@ -3332,23 +3317,18 @@ class PollsCog(commands.Cog, name="Polls"):
         else:
             op = False
 
-        async with self.acquire_bot_conn() as conn:
-            votes = await conn.fetch(
-                "SELECT * FROM pollsvotes WHERE user_id = $1", user.id
-            )
-
-        # votes = {int(k): v for k, v in votes.items() if k != 'user_id'}
-
-        votes = {v["poll_id"]: v["choice"] for v in votes}
+        votes = {v.poll_id: v.choice for v in await self.bot.polls_api.get_user_votes(user.id)}
 
         if poll_id is None:
             if not show_unvoted:
                 poll_ids = list(votes.keys())
 
-                async with self.acquire_bot_conn() as conn:
-                    polls = await conn.fetch(
-                        "SELECT * FROM polls WHERE id = ANY($1::integer[])", poll_ids
-                    )
+                guildid = await self.fetchguildid(interaction)
+                if poll_ids:
+                    polls = await self.bot.polls_api.sync_all_polls(guildId=guildid, ids=",".join(str(i) for i in poll_ids))
+                else:
+                    polls = []
+                polls = [self.polldict(p) for p in polls]
                 polls = [
                     i for i in polls if await self.canview(i, interaction.guild_id)
                 ]
@@ -3396,13 +3376,9 @@ class PollsCog(commands.Cog, name="Polls"):
                         return embed
 
             else:
-                async with self.acquire_bot_conn() as conn:
-                    polls = await conn.fetch(
-                        "SELECT * FROM "
-                        "polls NATURAL LEFT JOIN pollsinfo NATURAL LEFT JOIN pollstags "
-                        "WHERE (active = $1 or persistent = $1) and published = $1",
-                        True,
-                    )
+                polls = await self.bot.polls_api.sync_all_polls(guildId=await self.fetchguildid(interaction), live="true")
+                polls = [self.polldict(p) for p in polls]
+                polls = [poll for poll in polls if poll["published"]]
                 polls = [
                     i
                     for i in polls
@@ -3628,7 +3604,6 @@ class PollsCog(commands.Cog, name="Polls"):
             for k, v in {
                 "start_schedule": "Start schedules",
                 "end_schedule": "End schedules",
-                "update_votes": "Update votes",
                 "update_msg": "Update poll messages",
                 "update_selfassign": "Update self-assign buttons",
             }.items()
@@ -3667,41 +3642,6 @@ class PollsCog(commands.Cog, name="Polls"):
         await task(self.schedule_starts, "start_schedule")
 
         await task(self.schedule_ends, "end_schedule")
-
-        async def update_votes():
-            async with self.acquire_bot_conn() as conn:
-                if not tag:
-                    polls = await conn.fetch("SELECT * FROM polls")
-                else:
-                    polls = await conn.fetch("SELECT * FROM polls WHERE tag = $1", tag)
-                pollids = [i["id"] for i in polls if i["published"]]
-
-                votes = await conn.fetch("SELECT * FROM pollsvotes")
-                votepolls = {i["poll_id"] for i in votes}
-
-                if not tag:
-                    for p in votepolls:
-                        if p not in pollids:
-                            await conn.execute(
-                                "DELETE FROM pollsvotes WHERE poll_id = $1", p
-                            )
-
-                    votes = await conn.fetch("SELECT * FROM pollsvotes")
-
-                for poll in polls:
-                    if not poll["active"]:
-                        continue
-                    v = [i["choice"] for i in votes if i["poll_id"] == poll["id"]]
-                    total = [v.count(i) for i in range(len(poll["choices"]))]
-
-                    if total != poll["votes"]:
-                        await conn.execute(
-                            "UPDATE polls SET votes = $2 WHERE id = $1",
-                            poll["id"],
-                            total,
-                        )
-
-        await task(update_votes, "update_votes")
 
         async def update_msg():
             pollfilter = "published" if include_ended else "active"

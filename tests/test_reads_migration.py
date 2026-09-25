@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 from cogs.polls import PollsCog
-from funcs.polls_api_models import GuildSettings, Poll, Tag
+from funcs.polls_api_models import GuildSettings, Poll, Tag, UserVote
 
 
 def make_cog():
@@ -17,6 +17,8 @@ def make_cog():
 
     cog = PollsCog(FakeBot())
     cog.guild_ids = [288896937074360321]
+    cog.pollsme = PollsCog.pollsme._callback.__get__(cog)
+    cog.polladminsync = PollsCog.polladminsync._callback.__get__(cog)
     return cog
 
 
@@ -206,3 +208,81 @@ async def test_hasmanagerpermsbyuserandids_uses_guild_settings_arrays():
     assert await cog.hasmanagerpermsbyuserandids(user, 100, channel_id=301) == [100]
     cog.bot.polls_api.get_guild = AsyncMock(return_value=GuildSettings(**make_guild_dict(manager_role_id=[999])))
     assert await cog.hasmanagerpermsbyuserandids(user, 100, channel_id=999) == []
+
+
+async def test_on_startup_buttons_uses_composed_fetch():
+    cog = make_cog()
+    cog.fetchallpolls = AsyncMock(
+        return_value=[{"id": 1, "time": datetime(2026, 1, 1, tzinfo=timezone.utc), "active": True, "persistent": False, "published": True}]
+    )
+    cog.poll_buttons = AsyncMock()
+    cog.bot.add_view = MagicMock()
+    await cog.on_startup_buttons()
+    cog.fetchallpolls.assert_awaited_once_with()
+    cog.bot.add_view.assert_called_once()
+
+
+async def test_on_startup_selfassign_filters_roles_client_side():
+    cog = make_cog()
+    cog.fetchalltags = AsyncMock(
+        return_value=[
+            make_tag_dict(end_message_self_assign=True, end_message_role_ids=[1, 2]),
+            make_tag_dict(tag=2, end_message_self_assign=True, end_message_role_ids=[]),
+            make_tag_dict(tag=3, end_message_self_assign=False, end_message_role_ids=[5]),
+        ]
+    )
+    cog.bot.add_view = MagicMock()
+    await cog.on_startup_selfassign()
+    cog.fetchalltags.assert_awaited_once_with(end_message_self_assign="true")
+    cog.bot.add_view.assert_called_once()
+
+
+async def test_pollsme_votes_and_polls_come_from_api():
+    cog = make_cog()
+    cog.bot.polls_api.get_user_votes = AsyncMock(
+        return_value=[UserVote(id=1, user_id=1234, poll_id=42, choice=1)]
+    )
+    cog.bot.polls_api.sync_all_polls = AsyncMock(
+        return_value=[make_poll_model(id=42)]
+    )
+    cog.fetchguildid = AsyncMock(return_value=100)
+    cog.canview = AsyncMock(return_value=False)
+    cog.fetchcolourbyid = AsyncMock(return_value=1)
+    cog.sortpolls = lambda polls, sort: polls
+
+    interaction = MagicMock()
+    interaction.guild_id = 100
+    interaction.user = MagicMock()
+    interaction.user.id = 1234
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+    msg = MagicMock()
+    msg.edit = AsyncMock()
+    interaction.followup.send.return_value = msg
+
+    await cog.pollsme(interaction)
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once()
+    kwargs = cog.bot.polls_api.sync_all_polls.await_args.kwargs
+    assert kwargs["guildId"] == 100
+    assert kwargs["ids"] == "42"
+
+
+async def test_admin_sync_skips_update_votes_task():
+    cog = make_cog()
+    cog.fetchallpolls = AsyncMock(return_value=[])
+    cog.schedule_starts = AsyncMock()
+    cog.schedule_ends = AsyncMock()
+    cog.on_startup_selfassign = AsyncMock()
+    cog.do_updatepollmessage = AsyncMock()
+
+    interaction = MagicMock()
+    interaction.response.defer = AsyncMock()
+    msg = MagicMock()
+    msg.edit = AsyncMock()
+    interaction.followup.send = AsyncMock(return_value=msg)
+
+    await cog.polladminsync(interaction)
+    cog.fetchallpolls.assert_awaited_once_with()
+    cog.schedule_starts.assert_awaited_once()
+    cog.schedule_ends.assert_awaited_once()
+    cog.on_startup_selfassign.assert_awaited_once()
