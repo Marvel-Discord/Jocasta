@@ -42,7 +42,7 @@ class TimeCog(discord.ext.commands.Cog, name = "Time"):
 		_log.error('Ignoring exception in command %r', interaction.command.name, exc_info=error)
 
 
-	guild_ids = None if global_slashies else [288896937074360321, 1010550869391065169]
+	guild_ids = None if global_slashies else guild_ids
 
 	timestampgroup = app_commands.Group(name="timestamp", description="Timestamp creation commands", guild_ids=guild_ids)
 
