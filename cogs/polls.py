@@ -2339,7 +2339,7 @@ class PollsCog(commands.Cog, name="Polls"):
     @poll_manager_only()
     @valid_guild_only()
     @app_commands.describe(poll_id="5-digit ID of the poll to delete.")
-    async def polldelete(self, interaction: discord.Interaction, poll_id: int):
+    async def poll_delete(self, interaction: discord.Interaction, poll_id: int):
         """Deletes a poll question."""
 
         await interaction.response.defer()
@@ -2373,9 +2373,12 @@ class PollsCog(commands.Cog, name="Polls"):
         if view.value is None:
             await msg.edit(content="Timed out.", view=view)
         elif view.value:
-            async with self.acquire_bot_conn() as conn:
-                await conn.execute("DELETE FROM polls WHERE id = $1", poll_id)
-                await conn.execute("DELETE FROM pollsvotes WHERE poll_id = $1", poll_id)
+            try:
+                await self.bot.polls_api.delete_polls([poll_id], interaction.user.id)
+            except PollsAPIError:
+                return await interaction.followup.send(
+                    "Something went wrong, please try again", ephemeral=True
+                )
 
             # tags = await self.fetch_all_tags()
             # findtag = lambda x: next(i for i in tags if i['id'] == x['tag'])
@@ -2398,7 +2401,7 @@ class PollsCog(commands.Cog, name="Polls"):
         else:
             await msg.edit(content="Cancelled.", view=view)
 
-    @polldelete.autocomplete("poll_id")
+    @poll_delete.autocomplete("poll_id")
     async def polldelete_autocomplete_poll_id(
         self, interaction: discord.Interaction, current: int
     ):
