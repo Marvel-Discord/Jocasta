@@ -1508,10 +1508,8 @@ class PollsCog(commands.Cog, name="Polls"):
         )
 
     async def schedule_starts(self, *, tag=0, timestamps=[], natural=False):
-        async with self.acquire_bot_conn() as conn:
-            polls = await conn.fetch(
-                "SELECT * FROM polls WHERE time IS NOT NULL AND published = $1", False
-            )
+        polls = await self.bot.polls_api.sync_all_polls(guildId=self.polls_guild_id(), has_start="true")
+        polls = [self.poll_dict(p) for p in polls if not p.published]
 
         for k, v in self.bot.tasks["poll_schedules"]["starts"].items():
             if (
@@ -1540,10 +1538,8 @@ class PollsCog(commands.Cog, name="Polls"):
                     ] = self.bot.loop.create_task(self.scheduler(v, True))
 
     async def schedule_ends(self, *, poll_ids: list = [], natural=False):
-        async with self.acquire_bot_conn() as conn:
-            polls = await conn.fetch(
-                "SELECT * FROM polls WHERE duration IS NOT NULL AND active = $1", True
-            )
+        polls = await self.bot.polls_api.sync_all_polls(guildId=self.polls_guild_id(), has_end="true", active="true")
+        polls = [self.poll_dict(p) for p in polls]
 
         for k, v in self.bot.tasks["poll_schedules"]["ends"].items():
             if (not poll_ids or k in poll_ids) and not natural:
@@ -1592,7 +1588,7 @@ class PollsCog(commands.Cog, name="Polls"):
             self.bot.updatemsg_flags[poll["id"]] = False
 
             try:
-                await self.do_updatepollmessage(poll)
+                await self.do_update_poll_message(poll)
             except Exception:
                 traceback.print_exc()
 
@@ -1600,14 +1596,13 @@ class PollsCog(commands.Cog, name="Polls"):
             await asyncio.sleep(wait)
         self.bot.updatemsg_flags.pop(poll["id"])
 
-    async def do_updatepollmessage(self, poll, force=False):
+    async def do_update_poll_message(self, poll, force=False):
         tag = await self.fetch_tag(poll["tag"])
 
         crossposts = (
             [self.bot.get_channel(i) for i in tag["crosspost_channels"]] if tag else []
         )
 
-        await self.updatevotes(poll)
         poll = await self.fetch_poll(poll["id"])
 
         if not poll["message_id"]:
@@ -1644,19 +1639,6 @@ class PollsCog(commands.Cog, name="Polls"):
                     else:
                         if msg.author.id == self.bot.user.id:
                             await msg.edit(**txt)
-
-    async def updatevotes(self, poll):
-        async with self.acquire_bot_conn() as conn:
-            votes = await conn.fetch(
-                "SELECT (choice) from pollsvotes WHERE poll_id = $1", poll["id"]
-            )
-            votes = [i["choice"] for i in votes]
-            total = [votes.count(i) for i in range(len(poll["choices"]))]
-            if total != poll["votes"]:
-                await conn.execute(
-                    "UPDATE polls SET votes = $2 WHERE id = $1", poll["id"], total
-                )
-        return total
 
     def defaultthreadmsg(self, msg, vote=None):
         default = False
@@ -3630,7 +3612,7 @@ class PollsCog(commands.Cog, name="Polls"):
             filtered.sort(key=lambda x: discord.utils.utcnow() - x["time"])
             filtered.sort(key=lambda x: not x["active"])
             for poll in filtered:
-                await self.do_updatepollmessage(poll, force=poll["active"])
+                await self.do_update_poll_message(poll, force=poll["active"])
 
         await task(update_msg, "update_msg")
 

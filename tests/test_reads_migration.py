@@ -342,7 +342,7 @@ async def test_admin_sync_skips_update_votes_task():
     cog.schedule_starts = AsyncMock()
     cog.schedule_ends = AsyncMock()
     cog.on_startup_self_assign = AsyncMock()
-    cog.do_updatepollmessage = AsyncMock()
+    cog.do_update_poll_message = AsyncMock()
 
     interaction = MagicMock()
     interaction.response.defer = AsyncMock()
