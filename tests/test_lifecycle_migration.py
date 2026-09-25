@@ -158,4 +158,59 @@ async def test_poll_schedule_duration_computes_end_time():
     calls = cog.bot.polls_api.update_polls.await_args_list
     end_body = calls[-1].args[0][0]
     assert "end_time" in end_body
+    assert end_body["end_time"] == "2030-01-01T01:00:00+00:00"
+    assert end_body["id"] == 42
+
+
+async def test_poll_schedule_duration_published_uses_now_plus_duration():
+    cog = make_cog()
+    poll = make_poll_model(published=True)
+    cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(poll))
+    cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
+    cog.schedule_starts = AsyncMock()
+    cog.schedule_ends = AsyncMock()
+    cog.fetchcolourbyid = AsyncMock(return_value=1)
+    cog.bot.polls_api.update_polls = AsyncMock(return_value=[poll])
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_schedule(interaction, 42, duration=3600)
+
+    calls = cog.bot.polls_api.update_polls.await_args_list
+    end_body = calls[-1].args[0][0]
+    assert "end_time" in end_body
+    parsed = datetime.fromisoformat(end_body["end_time"])
+    delta = parsed - datetime.now(timezone.utc)
+    assert timedelta(hours=1) > delta > timedelta(minutes=59)
+    assert end_body["id"] == 42
+
+
+async def test_poll_schedule_duration_clear_sends_null_end_time():
+    cog = make_cog()
+    poll = make_poll_model(
+        published=False,
+        time=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        start_time=datetime(2030, 1, 1, tzinfo=timezone.utc),
+    )
+    cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(poll))
+    cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
+    cog.schedule_starts = AsyncMock()
+    cog.schedule_ends = AsyncMock()
+    cog.fetchcolourbyid = AsyncMock(return_value=1)
+    cog.bot.polls_api.update_polls = AsyncMock(return_value=[poll])
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_schedule(interaction, 42, duration=-1)
+
+    calls = cog.bot.polls_api.update_polls.await_args_list
+    end_body = calls[-1].args[0][0]
+    assert "end_time" in end_body
+    assert end_body["end_time"] is None
     assert end_body["id"] == 42
