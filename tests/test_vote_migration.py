@@ -66,7 +66,7 @@ async def test_vote_calls_cast_vote_with_poll_user_and_choice():
     cog.bot.polls_api.cast_vote = AsyncMock(return_value=make_counts())
     cog.updatepollmessage = AsyncMock()
 
-    result = await cog.vote(make_poll(), make_user(1234), 1)
+    result = await cog.cast_vote(make_poll(), make_user(1234), 1)
 
     cog.bot.polls_api.cast_vote.assert_awaited_once_with(42, 1234, 1)
     assert result == 1
@@ -77,7 +77,7 @@ async def test_vote_clear_sentinel_maps_to_none_for_api_delete():
     cog.bot.polls_api.cast_vote = AsyncMock(return_value=make_counts())
     cog.updatepollmessage = AsyncMock()
 
-    result = await cog.vote(make_poll(), make_user(1234), -1)
+    result = await cog.cast_vote(make_poll(), make_user(1234), -1)
 
     cog.bot.polls_api.cast_vote.assert_awaited_once_with(42, 1234, None)
     assert result == -1
@@ -88,7 +88,7 @@ async def test_vote_updates_poll_from_vote_counts_and_rerenders():
     cog.bot.polls_api.cast_vote = AsyncMock(return_value=make_counts())
     cog.updatepollmessage = AsyncMock()
 
-    result = await cog.vote(make_poll(), make_user(1234), 0)
+    result = await cog.cast_vote(make_poll(), make_user(1234), 0)
 
     cog.updatepollmessage.assert_awaited_once()
     rendered = cog.updatepollmessage.await_args.args[0]
@@ -103,7 +103,7 @@ async def test_vote_api_error_propagates_without_rerender():
     cog.updatepollmessage = AsyncMock()
 
     try:
-        await cog.vote(make_poll(), make_user(1234), 1)
+        await cog.cast_vote(make_poll(), make_user(1234), 1)
     except PollsAPIError:
         pass
     else:
@@ -124,7 +124,7 @@ async def test_view_vote_error_sends_ephemeral_error_reply():
     cog = make_cog()
     poll = make_poll()
     cog.fetchpoll = AsyncMock(return_value=poll)
-    cog.vote = AsyncMock(side_effect=PollsAPIError(0, "network error"))
+    cog.cast_vote = AsyncMock(side_effect=PollsAPIError(0, "network error"))
     cog.add_to_thread = AsyncMock()
 
     view = PollsCog.PollView(cog, poll, active=True)
@@ -141,14 +141,14 @@ async def test_view_vote_success_sends_confirmation():
     cog = make_cog()
     poll = make_poll()
     cog.fetchpoll = AsyncMock(return_value=poll)
-    cog.vote = AsyncMock(return_value=1)
+    cog.cast_vote = AsyncMock(return_value=1)
     cog.add_to_thread = AsyncMock()
 
     view = PollsCog.PollView(cog, poll, active=True)
     interaction = make_interaction()
     await view.vote(cog, poll, interaction, 1)
 
-    cog.vote.assert_awaited_once_with(poll, interaction.user, 1)
+    cog.cast_vote.assert_awaited_once_with(poll, interaction.user, 1)
     interaction.followup.send.assert_awaited_once()
     assert "you voted" in interaction.followup.send.await_args.args[0]
     assert interaction.followup.send.await_args.kwargs["ephemeral"] is True
@@ -161,7 +161,7 @@ async def test_vote_read_path_still_uses_sql_when_poll_inactive():
     cog.acquire_bot_conn = acquire
     cog.bot.polls_api.cast_vote = AsyncMock()
 
-    result = await cog.vote(make_poll(active=False), make_user(1234), 1)
+    result = await cog.get_user_vote(make_poll(active=False), make_user(1234))
 
     conn.fetchrow.assert_awaited_once_with(
         "SELECT * FROM pollsvotes WHERE user_id = $1 AND poll_id = $2", 1234, 42
@@ -176,7 +176,7 @@ async def test_vote_read_path_uses_sql_when_choice_is_none():
     cog.acquire_bot_conn = acquire
     cog.bot.polls_api.cast_vote = AsyncMock()
 
-    result = await cog.vote(make_poll(), make_user(1234), None)
+    result = await cog.get_user_vote(make_poll(), make_user(1234))
 
     conn.fetchrow.assert_awaited_once()
     cog.bot.polls_api.cast_vote.assert_not_awaited()

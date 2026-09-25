@@ -835,7 +835,7 @@ class PollsCog(commands.Cog, name="Polls"):
             embed.add_field(name="Votes", value="Votes are hidden!")
 
         txt = []
-        vote = await self.vote(poll, user)
+        vote = await self.get_user_vote(poll, user)
         if vote is not None:
             txt.append(f"You've voted: {self.choiceformat(vote)}")
             if poll["show_options"]:
@@ -1759,7 +1759,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
             if self.active:
                 try:
-                    await client.vote(poll, interaction.user, value)
+                    await client.cast_vote(poll, interaction.user, value)
                 except PollsAPIError:
                     await interaction.followup.send(
                         "Something went wrong, please try again", ephemeral=True
@@ -1886,35 +1886,33 @@ class PollsCog(commands.Cog, name="Polls"):
             )
             self.bot.add_view(view)
 
-    async def vote(self, poll: dict, user, choice=None):
-        if (
-            (poll["active"] or poll["persistent"])
-            and poll["published"]
-            and choice is not None
-        ):
-            api_choice = None if choice == -1 else choice
-            counts = await self.bot.polls_api.cast_vote(
-                poll["id"], user.id, api_choice
+    async def cast_vote(self, poll: dict, user, choice: int):
+        """Cast, update, or delete a vote via the API (choice -1 = delete)."""
+        api_choice = None if choice == -1 else choice
+        counts = await self.bot.polls_api.cast_vote(
+            poll["id"], user.id, api_choice
+        )
+
+        poll["votes"] = counts.votes
+        poll["total_votes"] = counts.total_votes
+
+        await self.updatepollmessage(poll)
+
+        return choice
+
+    async def get_user_vote(self, poll: dict, user):
+        """Return the user's current vote for a poll, or None."""
+        async with self.acquire_bot_conn() as conn:
+            vote = await conn.fetchrow(
+                "SELECT * FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
+                user.id,
+                poll["id"],
             )
 
-            poll["votes"] = counts.votes
-            poll["total_votes"] = counts.total_votes
-
-            await self.updatepollmessage(poll)
-
-            return choice
-        else:
-            async with self.acquire_bot_conn() as conn:
-                vote = await conn.fetchrow(
-                    "SELECT * FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
-                    user.id,
-                    poll["id"],
-                )
-
-                if vote:
-                    return vote["choice"]
-                else:
-                    return None
+            if vote:
+                return vote["choice"]
+            else:
+                return None
 
     async def add_to_thread(self, interaction, poll=None, choice=None, show_vote=False):
         thread = interaction.message.guild.get_channel_or_thread(interaction.message.id)
