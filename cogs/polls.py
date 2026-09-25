@@ -1242,7 +1242,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     # other stuff i haven't categorised yet #
 
-    async def splitstartpolls(self, poll_ids: list, *, set_time=None, natural=False):
+    async def split_start_polls(self, poll_ids: list, *, natural=False):
         if not isinstance(poll_ids, list):
             poll_ids = [poll_ids]
 
@@ -1257,12 +1257,12 @@ class PollsCog(commands.Cog, name="Polls"):
                 polls[tid] = [poll_id]
 
         for t, p in polls.items():
-            await self.startpolls(p, set_time=set_time, natural=natural)
+            await self.start_polls(p, natural=natural)
 
-    async def startpoll(self, poll_id, **kwargs):
-        return await self.startpolls([poll_id], **kwargs)
+    async def start_poll(self, poll_id, **kwargs):
+        return await self.start_polls([poll_id], **kwargs)
 
-    async def startpolls(self, poll_ids: list, *, set_time=None, natural=False):
+    async def start_polls(self, poll_ids: list, *, natural=False):
         await self.bot.wait_until_ready()
 
         if not isinstance(poll_ids, list):
@@ -1283,34 +1283,6 @@ class PollsCog(commands.Cog, name="Polls"):
         guild = await self.fetch_guild_info(poll["guild_id"])
         channel_id = self.fetchchannelid(guild, tag)
 
-        async with self.acquire_bot_conn() as conn:
-            for poll, t in polls:
-                num = None
-                if tag:
-                    if tag["current_num"]:
-                        num = (await self.fetch_tag(poll["tag"]))["current_num"]
-                        await conn.execute(
-                            "UPDATE pollstags SET current_num = $2 WHERE tag = $1",
-                            tag["tag"],
-                            num + 1,
-                        )
-
-                votes = [0 for i in range(len(poll["choices"]))]
-
-                await conn.execute(
-                    "UPDATE polls SET published = $2, active = $3, votes = $4, num = $5 WHERE id = $1",
-                    poll["id"],
-                    True,
-                    True,
-                    votes,
-                    num,
-                )
-
-                if set_time:
-                    await conn.execute(
-                        "UPDATE polls SET time = $2 WHERE id = $1", poll["id"], set_time
-                    )
-
         msgs = [[await self.formatpollmessage(p), p] for p in [i[0] for i in polls]]
         final = []
 
@@ -1321,21 +1293,6 @@ class PollsCog(commands.Cog, name="Polls"):
 
         async def send(txt, poll, channel, *, main=True):
             msg = await channel.send(**txt)
-
-            if main:
-                async with self.acquire_bot_conn() as conn:
-                    await conn.execute(
-                        "UPDATE polls SET message_id = $2 WHERE id = $1",
-                        poll["id"],
-                        msg.id,
-                    )
-            else:
-                async with self.acquire_bot_conn() as conn:
-                    await conn.execute(
-                        "UPDATE polls SET crosspost_message_ids = crosspost_message_ids || $2 WHERE id = $1",
-                        poll["id"],
-                        [msg.id],
-                    )
 
             if poll["thread_question"]:
                 name = poll["question"]
@@ -1352,16 +1309,16 @@ class PollsCog(commands.Cog, name="Polls"):
 
             return msg
 
-        async with self.acquire_bot_conn() as conn:
-            await conn.execute(
-                "UPDATE polls SET crosspost_message_ids = $2 WHERE id = $1",
-                poll["id"],
-                [],
-            )
         for txt, poll in msgs:
-            final.append([poll, await send(txt, poll, channel)])
+            main_msg = await send(txt, poll, channel)
+            final.append([poll, main_msg])
+            crosspost_ids = []
             for ch in crossposts:
-                final.append([poll, await send(txt, poll, ch, main=False)])
+                crosspost_msg = await send(txt, poll, ch, main=False)
+                final.append([poll, crosspost_msg])
+                crosspost_ids.append(crosspost_msg.id)
+
+            await self.bot.polls_api.publish_poll(poll["id"], main_msg.id, crosspost_ids)
 
         for poll, t in polls:
             if poll["time"]:  # needs to be old time
@@ -1385,7 +1342,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 colour=await self.fetchcolourbyid(guild["guild_id"], tag["tag"]),
             )
 
-            def getroles(channel):
+            def get_roles(channel):
                 roles = []
                 for r in tag["end_message_role_ids"]:
                     role = channel.guild.get_role(r)
@@ -1393,23 +1350,20 @@ class PollsCog(commands.Cog, name="Polls"):
                         roles.append(role)
                 return roles
 
-            roles = getroles(channel)
+            roles = get_roles(channel)
             txt["content"] = " ".join([r.mention for r in roles])
             txt["view"] = view if roles else None
             endmsgs = [await channel.send(**txt)]
 
             for ch in crossposts:
-                roles = getroles(ch)
+                roles = get_roles(ch)
                 txt["content"] = " ".join([r.mention for r in roles])
                 txt["view"] = view if roles else None
                 endmsgs.append(await ch.send(**txt))
 
             endmsgtags = [tag]
             if tag["end_message_replace"]:
-                async with self.acquire_bot_conn() as conn:
-                    alltags = await conn.fetch(
-                        "SELECT * FROM pollstags WHERE end_message_replace = $1", True
-                    )
+                alltags = await self.fetch_all_tags(end_message_replace="true")
                 channels = [tag["channel_id"]] + tag["crosspost_channels"]
                 endmsgtags += [
                     i
@@ -1538,7 +1492,7 @@ class PollsCog(commands.Cog, name="Polls"):
             )
 
         if start:
-            await self.splitstartpolls(polls, natural=True)
+            await self.split_start_polls(polls, natural=True)
         else:
             for p in polls:
                 await self.endpoll(p, natural=True)
@@ -3014,7 +2968,7 @@ class PollsCog(commands.Cog, name="Polls"):
         poll_id="5-digit ID of the poll to start.",
         duration="Duration for poll to run. Can pass Epoch timestamp (UTC) as the ending time instead. Can give number of seconds as raw value.",
     )
-    async def pollstart(
+    async def poll_start(
         self, interaction: discord.Interaction, poll_id: int, duration: int = None
     ):
         """Starts the voting for a poll question."""
@@ -3050,17 +3004,18 @@ class PollsCog(commands.Cog, name="Polls"):
 
         currenttime = discord.utils.utcnow()
 
+        body = {
+            "id": poll_id,
+            "question": poll["question"],
+            "choices": poll["choices"],
+            "start_time": currenttime.isoformat(),
+        }
         if duration:
-            durationtimedelta = _dt.timedelta(seconds=duration)
-            async with self.acquire_bot_conn() as conn:
-                await conn.execute(
-                    "UPDATE polls SET time = $2, duration = $3 WHERE id = $1",
-                    poll_id,
-                    discord.utils.utcnow(),
-                    durationtimedelta,
-                )
+            body["end_time"] = (currenttime + _dt.timedelta(seconds=duration)).isoformat()
 
-        result = await self.startpoll(poll["id"], set_time=currenttime)
+        await self.bot.polls_api.update_polls([body], interaction.user.id)
+
+        result = await self.start_poll(poll["id"])
 
         if result:
             msglinks = "\n".join(
@@ -3075,7 +3030,7 @@ class PollsCog(commands.Cog, name="Polls"):
         else:
             raise Exception
 
-    @pollstart.autocomplete("poll_id")
+    @poll_start.autocomplete("poll_id")
     async def pollstart_autocomplete_poll_id(
         self, interaction: discord.Interaction, current: int
     ):
@@ -3083,7 +3038,7 @@ class PollsCog(commands.Cog, name="Polls"):
             interaction, current, published=False
         )
 
-    @pollstart.autocomplete("duration")
+    @poll_start.autocomplete("duration")
     async def pollstart_autocomplete_duration(
         self, interaction: discord.Interaction, current: float
     ):
