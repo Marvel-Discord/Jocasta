@@ -3323,8 +3323,8 @@ class PollsCog(commands.Cog, name="Polls"):
             if not show_unvoted:
                 poll_ids = list(votes.keys())
 
-                guildid = await self.fetchguildid(interaction)
                 if poll_ids:
+                    guildid = await self.fetchguildid(interaction)
                     polls = await self.bot.polls_api.sync_all_polls(guildId=guildid, ids=",".join(str(i) for i in poll_ids))
                 else:
                     polls = []
@@ -3376,8 +3376,11 @@ class PollsCog(commands.Cog, name="Polls"):
                         return embed
 
             else:
-                polls = await self.bot.polls_api.sync_all_polls(guildId=await self.fetchguildid(interaction), live="true")
-                polls = [self.polldict(p) for p in polls]
+                guildid = await self.fetchguildid(interaction)
+                guild = await self.fetchguildinfo(guildid)
+                tags = {t["tag"]: t for t in await self.fetchalltags()}
+                polls = await self.bot.polls_api.sync_all_polls(guildId=guildid, live="true")
+                polls = [self.polldict(p, tags.get(p.tag), guild) for p in polls]
                 polls = [poll for poll in polls if poll["published"]]
                 polls = [
                     i

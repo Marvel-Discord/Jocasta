@@ -267,6 +267,51 @@ async def test_pollsme_votes_and_polls_come_from_api():
     assert kwargs["ids"] == "42"
 
 
+def make_interaction():
+    interaction = MagicMock()
+    interaction.guild_id = 100
+    interaction.user = MagicMock()
+    interaction.user.id = 1234
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+    msg = MagicMock()
+    msg.edit = AsyncMock()
+    interaction.followup.send.return_value = msg
+    return interaction
+
+
+async def test_pollsme_show_unvoted_composes_tag_and_guild_keys():
+    cog = make_cog()
+    cog.bot.polls_api.get_user_votes = AsyncMock(return_value=[])
+    cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[make_poll_model()])
+    cog.bot.polls_api.get_guild = AsyncMock(return_value=GuildSettings(**make_guild_dict()))
+    cog.bot.polls_api.get_tags = AsyncMock(return_value=[Tag(**make_tag_dict())])
+    cog.fetchguildid = AsyncMock(return_value=100)
+    cog.fetchcolourbyid = AsyncMock(return_value=1)
+    cog.sortpolls = lambda polls, sort: polls
+    seen = []
+    cog.canview = AsyncMock(side_effect=lambda poll, guild_id: seen.append(poll) or False)
+
+    await cog.pollsme(make_interaction(), show_unvoted=True)
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(guildId=100, live="true")
+    assert seen[0]["channel_id"] == 200
+    assert seen[0]["fallback_channel_id"] == 303
+
+
+async def test_pollsme_no_votes_makes_no_wasted_fetches():
+    cog = make_cog()
+    cog.bot.polls_api.get_user_votes = AsyncMock(return_value=[])
+    cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[])
+    cog.fetchguildid = AsyncMock(return_value=100)
+    cog.fetchcolourbyid = AsyncMock(return_value=1)
+
+    await cog.pollsme(make_interaction())
+
+    cog.bot.polls_api.sync_all_polls.assert_not_awaited()
+    assert cog.fetchguildid.await_count == 1
+
+
 async def test_admin_sync_skips_update_votes_task():
     cog = make_cog()
     cog.fetchallpolls = AsyncMock(return_value=[])
