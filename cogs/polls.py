@@ -1905,17 +1905,11 @@ class PollsCog(commands.Cog, name="Polls"):
 
     async def get_user_vote(self, poll: dict, user):
         """Return the user's current vote for a poll, or None."""
-        async with self.acquire_bot_conn() as conn:
-            vote = await conn.fetchrow(
-                "SELECT * FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
-                user.id,
-                poll["id"],
-            )
-
-            if vote:
-                return vote["choice"]
-            else:
-                return None
+        votes = await self.bot.polls_api.get_user_votes(user.id)
+        for vote in votes:
+            if vote.poll_id == poll["id"]:
+                return vote.choice
+        return None
 
     async def add_to_thread(self, interaction, poll=None, choice=None, show_vote=False):
         thread = interaction.message.guild.get_channel_or_thread(interaction.message.id)

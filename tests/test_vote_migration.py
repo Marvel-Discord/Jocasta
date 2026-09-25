@@ -1,10 +1,9 @@
 """Tests for the vote write-path migration from postgres to the polls API."""
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 from cogs.polls import PollsCog
 from funcs.polls_api import PollsAPIError
-from funcs.polls_api_models import VoteCounts
+from funcs.polls_api_models import UserVote, VoteCounts
 
 
 def make_cog():
@@ -46,19 +45,6 @@ def make_user(user_id=1234):
 
 def make_counts():
     return VoteCounts(votes=[1, 2, 0], total_votes=3)
-
-
-def fake_conn(fetchrow_result=None):
-    """acquire_bot_conn replacement yielding a mocked connection."""
-    conn = MagicMock()
-    conn.fetchrow = AsyncMock(return_value=fetchrow_result)
-    conn.execute = AsyncMock()
-
-    @asynccontextmanager
-    async def acquire():
-        yield conn
-
-    return acquire, conn
 
 
 async def test_vote_calls_cast_vote_with_poll_user_and_choice():
@@ -155,29 +141,21 @@ async def test_view_vote_success_sends_confirmation():
     cog.add_to_thread.assert_awaited_once()
 
 
-async def test_vote_read_path_still_uses_sql_when_poll_inactive():
+async def test_get_user_vote_returns_matching_choice():
     cog = make_cog()
-    acquire, conn = fake_conn(fetchrow_result={"choice": 2})
-    cog.acquire_bot_conn = acquire
-    cog.bot.polls_api.cast_vote = AsyncMock()
-
-    result = await cog.get_user_vote(make_poll(active=False), make_user(1234))
-
-    conn.fetchrow.assert_awaited_once_with(
-        "SELECT * FROM pollsvotes WHERE user_id = $1 AND poll_id = $2", 1234, 42
+    cog.bot.polls_api.get_user_votes = AsyncMock(
+        return_value=[
+            UserVote(id=1, user_id=1234, poll_id=41, choice=0),
+            UserVote(id=2, user_id=1234, poll_id=42, choice=2),
+        ]
     )
-    cog.bot.polls_api.cast_vote.assert_not_awaited()
-    assert result == 2
+
+    assert await cog.get_user_vote(make_poll(), make_user(1234)) == 2
+    cog.bot.polls_api.get_user_votes.assert_awaited_once_with(1234)
 
 
-async def test_vote_read_path_uses_sql_when_choice_is_none():
+async def test_get_user_vote_returns_none_when_absent():
     cog = make_cog()
-    acquire, conn = fake_conn(fetchrow_result=None)
-    cog.acquire_bot_conn = acquire
-    cog.bot.polls_api.cast_vote = AsyncMock()
+    cog.bot.polls_api.get_user_votes = AsyncMock(return_value=[])
 
-    result = await cog.get_user_vote(make_poll(), make_user(1234))
-
-    conn.fetchrow.assert_awaited_once()
-    cog.bot.polls_api.cast_vote.assert_not_awaited()
-    assert result is None
+    assert await cog.get_user_vote(make_poll(), make_user(1234)) is None
