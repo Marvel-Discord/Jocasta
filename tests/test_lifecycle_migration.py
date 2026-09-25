@@ -9,7 +9,7 @@ from funcs.polls_api_models import GuildSettings, Poll, Tag, UserVote
 def make_cog():
     class FakeBot:
         def __init__(self):
-            self.tasks = {}
+            self.tasks = {"poll_schedules": {"starts": {}, "ends": {}}}
             self.tree = MagicMock()
             self.loop = MagicMock()
             self.loop.create_task.side_effect = lambda coro: coro.close()
@@ -393,3 +393,57 @@ async def test_poll_end_command_passes_user_for_early_end():
     await cog.poll_end(interaction, 42)
 
     cog.end_poll.assert_awaited_once_with(42, end_now=True, user_id=1234)
+
+
+async def test_schedule_starts_fetches_unpublished_with_start_via_api():
+    cog = make_cog()
+    cog.guild_ids = [100]
+    scheduled = make_poll_model(published=False)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(
+        return_value=[scheduled, make_poll_model(id=2, published=True)]
+    )
+    created = []
+    cog.bot.loop.create_task = lambda coro: (created.append(coro), coro.close())[1]
+
+    await cog.schedule_starts()
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once()
+    kwargs = cog.bot.polls_api.sync_all_polls.await_args.kwargs
+    assert kwargs["guildId"] == 100
+    assert kwargs["has_start"] == "true"
+    assert len(created) == 1
+
+
+async def test_schedule_ends_fetches_active_with_end_via_api():
+    cog = make_cog()
+    cog.guild_ids = [100]
+    cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[])
+    created = []
+    cog.bot.loop.create_task = lambda coro: (created.append(coro), coro.close())[1]
+
+    await cog.schedule_ends()
+
+    kwargs = cog.bot.polls_api.sync_all_polls.await_args.kwargs
+    assert kwargs["guildId"] == 100
+    assert kwargs["has_end"] == "true"
+    assert kwargs["active"] == "true"
+
+
+def test_updatevotes_is_gone():
+    assert not hasattr(PollsCog, "updatevotes")
+
+
+async def test_do_update_poll_message_fetches_without_vote_recompute():
+    cog = make_cog()
+    poll_dict = cog.poll_dict(make_poll_model())
+    cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.formatpollmessage = AsyncMock(return_value={"content": None, "embed": None, "view": None})
+    cog.fetchpollmsg = AsyncMock(return_value=MagicMock(content=None, embeds=[], author=MagicMock(id=1)))
+    cog.bot.updatemsg_lock = MagicMock()
+    cog.bot.get_channel = MagicMock(return_value=MagicMock(fetch_message=AsyncMock()))
+    cog.bot.user = MagicMock(id=2)
+
+    await cog.do_update_poll_message(poll_dict)
+
+    cog.fetch_poll.assert_awaited_with(42)
