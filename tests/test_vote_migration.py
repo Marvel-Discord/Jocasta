@@ -109,7 +109,7 @@ def make_interaction(user_id=1234):
 async def test_view_vote_error_sends_ephemeral_error_reply():
     cog = make_cog()
     poll = make_poll()
-    cog.fetchpoll = AsyncMock(return_value=poll)
+    cog.fetch_poll = AsyncMock(return_value=poll)
     cog.cast_vote = AsyncMock(side_effect=PollsAPIError(0, "network error"))
     cog.add_to_thread = AsyncMock()
 
@@ -126,7 +126,7 @@ async def test_view_vote_error_sends_ephemeral_error_reply():
 async def test_view_vote_success_sends_confirmation():
     cog = make_cog()
     poll = make_poll()
-    cog.fetchpoll = AsyncMock(return_value=poll)
+    cog.fetch_poll = AsyncMock(return_value=poll)
     cog.cast_vote = AsyncMock(return_value=1)
     cog.add_to_thread = AsyncMock()
 
