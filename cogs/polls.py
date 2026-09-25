@@ -882,7 +882,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         return polls
 
-    guild_ids = None if global_slashies else [288896937074360321, 1010550869391065169]
+    guild_ids = None if global_slashies else guild_ids
 
     pollsgroup = app_commands.Group(
         name="polls", description="Poll commands", guild_ids=guild_ids

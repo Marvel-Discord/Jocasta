@@ -17,6 +17,9 @@ redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 polls_api_base_url = os.getenv("POLLS_API_BASE_URL", "http://localhost:8000/api/v1")
 polls_api_token = os.getenv("POLLS_API_TOKEN", "")
 global_slashies = os.getenv("GLOBAL_SLASHIES", "False").lower() == "true"
+guild_ids = [
+    int(x) for x in os.getenv("GUILD_IDS", "288896937074360321,1010550869391065169").split(",") if x
+]
 database_listener_logs = os.getenv("DATABASE_LISTENER_LOGS", "True").lower() == "true"
 
 homeserver = int(os.getenv("HOMESERVER"))
