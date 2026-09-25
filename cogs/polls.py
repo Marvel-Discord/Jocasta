@@ -2429,7 +2429,7 @@ class PollsCog(commands.Cog, name="Polls"):
         show_options="Show options in poll message.",
         show_voting="Show the current state of votes in poll message.",
     )
-    async def polledit(
+    async def poll_edit(
         self,
         interaction: discord.Interaction,
         poll_id: int,
@@ -2595,22 +2595,33 @@ class PollsCog(commands.Cog, name="Polls"):
                 if v is not None:
                     final[k] = v
 
-            txt = [
-                f"{k} = ${i}"
-                for k, i in zip(final.keys(), list(range(2, len(final) + 2)))
-            ]
+            body = {
+                "id": poll_id,
+                "question": final["question"],
+                "choices": final["choices"],
+                "description": final.get("description"),
+                "thread_question": final.get("thread_question"),
+                "image": final.get("image"),
+            }
+            for key in ("tag", "show_question", "show_options", "show_voting"):
+                if final.get(key) is not None:
+                    body[key] = final[key]
 
-            async with self.acquire_bot_conn() as conn:
-                await conn.execute(
-                    f"UPDATE polls SET {', '.join(txt)} WHERE id = $1",
-                    poll_id,
-                    *final.values(),
+            try:
+                await self.bot.polls_api.update_polls([body], interaction.user.id)
+            except PollsAPIError:
+                return await interaction.followup.send(
+                    "Something went wrong, please try again", ephemeral=True
                 )
 
         else:
             clearvalue = "-clear"
 
-            if image and image.content_type.split("/")[0] == "image":
+            if (
+                image
+                and not isinstance(image, str)
+                and image.content_type.split("/")[0] == "image"
+            ):
                 image = image.url
 
             if question and len(question) > self.maxqlength:
@@ -2643,52 +2654,34 @@ class PollsCog(commands.Cog, name="Polls"):
             if len(choices) < 2:
                 return await interaction.followup.send("You need at least 2 choices!")
 
-            async def update(name, *values):
-                if not isinstance(name, list):
-                    name = [name]
-                if len(name) != len(values):
-                    raise Exception
-
-                txt = [
-                    f"{k} = ${i}" for k, i in zip(name, list(range(1, len(values) + 1)))
-                ]
-
-                async with self.acquire_bot_conn() as conn:
-                    await conn.execute(
-                        f"UPDATE polls SET {', '.join(txt)} WHERE id = ${len(values) + 1}",
-                        *values,
-                        poll_id,
-                    )
-
             clear = lambda x: None if x == clearvalue else x
 
-            names = []
-            values = []
-
-            def append(name, value):
-                names.append(name)
-                values.append(value)
-
-            if question is not None:
-                append("question", question)
-            if choices is not None:
-                append("choices", choices)
+            body = {
+                "id": poll_id,
+                "question": question if question is not None else poll["question"],
+                "choices": choices,
+            }
             if description is not None:
-                append("description", clear(description))
+                body["description"] = clear(description)
             if thread_question is not None:
-                append("thread_question", clear(thread_question))
+                body["thread_question"] = clear(thread_question)
             if image is not None:
-                append("image", clear(image))
+                body["image"] = clear(image)
             if tag is not None:
-                append("tag", clear(tag))
+                body["tag"] = tag
             if show_question is not None:
-                append("show_question", show_question)
+                body["show_question"] = show_question
             if show_options is not None:
-                append("show_options", show_options)
+                body["show_options"] = show_options
             if show_voting is not None:
-                append("show_voting", show_voting)
+                body["show_voting"] = show_voting
 
-            await update(names, *values)
+            try:
+                await self.bot.polls_api.update_polls([body], interaction.user.id)
+            except PollsAPIError:
+                return await interaction.followup.send(
+                    "Something went wrong, please try again", ephemeral=True
+                )
 
         newpoll = await self.fetch_poll(poll_id)
 
@@ -2708,7 +2701,7 @@ class PollsCog(commands.Cog, name="Polls"):
             f"Edited poll `{poll_id}`", embeds=[oldembed, newembed]
         )
 
-    @polledit.autocomplete("poll_id")
+    @poll_edit.autocomplete("poll_id")
     async def polledit_autocomplete_poll_id(
         self, interaction: discord.Interaction, current: int
     ):
@@ -2733,7 +2726,7 @@ class PollsCog(commands.Cog, name="Polls"):
         ]
         return choices
 
-    @polledit.autocomplete("tag")
+    @poll_edit.autocomplete("tag")
     async def polledit_autocomplete_tag(
         self, interaction: discord.Interaction, current: str
     ):
