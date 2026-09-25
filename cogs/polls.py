@@ -265,16 +265,11 @@ class PollsCog(commands.Cog, name="Polls"):
         return x + y
 
     async def searchpollsbyid(self, poll_id, showunpublished=False):
-        async with self.acquire_bot_conn() as conn:
-            if showunpublished:
-                return await conn.fetch(
-                    "SELECT * FROM polls WHERE CAST(id AS TEXT) LIKE $1", f"{poll_id}%"
-                )
-            else:
-                return await conn.fetch(
-                    "SELECT * FROM polls WHERE CAST(id AS TEXT) LIKE $1 AND published = true",
-                    f"{poll_id}%",
-                )
+        polls = await self.fetchallpolls(showunpublished=showunpublished)
+        if not showunpublished:
+            polls = [poll for poll in polls if poll["published"]]
+        prefix = str(poll_id)
+        return [poll for poll in polls if str(poll["id"]).startswith(prefix)]
 
     async def searchpollsbykeyword(self, keyword, showunpublished=False):
         # async with self.acquire_bot_conn() as conn:
@@ -327,13 +322,15 @@ class PollsCog(commands.Cog, name="Polls"):
         return out
 
     async def fetchpoll(self, poll_id: int):
-        async with self.acquire_bot_conn() as conn:
-            return await conn.fetchrow(
-                "SELECT * FROM "
-                "polls NATURAL LEFT JOIN pollsinfo NATURAL LEFT JOIN pollstags "
-                "WHERE polls.id = $1",
-                poll_id,
-            )
+        try:
+            poll = await self.bot.polls_api.get_poll(poll_id)
+        except PollsAPIError as e:
+            if e.status == 404:
+                return None
+            raise
+        tag = await self.fetchtag(poll.tag)
+        guild = await self.fetchguildinfo(poll.guild_id)
+        return self.polldict(poll, tag, guild)
 
     async def fetchpollmsg(self, poll):
         return await self.bot.get_channel(
@@ -350,22 +347,25 @@ class PollsCog(commands.Cog, name="Polls"):
         return guild.model_dump()
 
     async def fetchguildinfobymanagechannel(self, channelid: int):
-        async with self.acquire_bot_conn() as conn:
-            return await conn.fetchrow(
-                "SELECT * FROM pollsinfo WHERE manage_channel_id && $1", [channelid]
-            )
+        guild = await self.fetchguildinfo(self.polls_guild_id())
+        if guild and channelid in guild["manage_channel_id"]:
+            return guild
+        return None
 
     async def fetchtag(self, tagid: int):
-        async with self.acquire_bot_conn() as conn:
-            return (
-                await conn.fetchrow("SELECT * FROM pollstags WHERE tag = $1", tagid)
-                if tagid
-                else None
-            )
+        if not tagid:
+            return None
+        try:
+            tag = await self.bot.polls_api.get_tag(tagid)
+        except PollsAPIError as e:
+            if e.status == 404:
+                return None
+            raise
+        return tag.model_dump()
 
     async def fetchtagsbyguildid(self, guildid: int):
-        async with self.acquire_bot_conn() as conn:
-            return conn.fetch("SELECT * FROM pollstags WHERE guild_id = $1", guildid)
+        tags = await self.fetchalltags()
+        return [tag for tag in tags if tag["guild_id"] == guildid]
 
     async def fetchalltags(self, **params):
         tags = await self.bot.polls_api.get_tags(**params)
@@ -416,27 +416,15 @@ class PollsCog(commands.Cog, name="Polls"):
         )
 
     async def hasmanagerpermsbyuserandids(self, user, guild_id, channel_id=None):
-        async with self.acquire_bot_conn() as conn:
-            guild = await conn.fetchrow(
-                "SELECT * FROM pollsinfo WHERE guild_id = $1", guild_id
-            )
-            if not guild:
-                return []
-            if channel_id:
-                manage_channels = await conn.fetch(
-                    "SELECT * FROM pollsinfo WHERE manage_channel_id && $1",
-                    [channel_id],
-                )
-            else:
-                manage_channels = []
-
+        guild = await self.fetchguildinfo(guild_id)
+        if not guild:
+            return []
         guilds = []
-
-        guilds += [i["guild_id"] for i in manage_channels]
-
-        if any([r.id in guild["manager_role_id"] for r in user.roles]):
+        if channel_id and channel_id in guild["manage_channel_id"]:
             guilds.append(guild["guild_id"])
-
+        if any(r.id in guild["manager_role_id"] for r in user.roles):
+            if guild["guild_id"] not in guilds:
+                guilds.append(guild["guild_id"])
         return guilds
 
     async def canview(self, poll, guild_id):
