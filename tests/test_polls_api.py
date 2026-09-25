@@ -384,3 +384,57 @@ async def test_cog_unload_closes_client():
     cog = PollsAPICog(bot)
     await cog.cog_unload()
     client.close.assert_awaited_once()
+
+
+def user_vote_payload(**overrides) -> dict:
+    payload = {
+        "id": 123400042,
+        "user_id": "1234",
+        "poll_id": 42,
+        "choice": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+async def test_get_user_votes_returns_validated_votes():
+    async def handler(request):
+        assert request.url.path == "/bot/polls/votes/1234"
+        return httpx2.Response(
+            200,
+            json=[user_vote_payload(), user_vote_payload(id="223400043", user_id="1234", poll_id=43, choice=0)],
+        )
+
+    client = make_client(handler)
+    votes = await client.get_user_votes(1234)
+    assert len(votes) == 2
+    assert votes[0].poll_id == 42
+    assert votes[0].choice == 1
+    assert votes[1].user_id == 1234
+
+
+async def test_sync_all_polls_pages_until_total():
+    pages = {
+        1: httpx2.Response(200, json={"data": [poll_payload(id=i) for i in range(1, 101)], "meta": {"total": 120, "page": 1, "limit": 100}}),
+        2: httpx2.Response(200, json={"data": [poll_payload(id=i) for i in range(101, 121)], "meta": {"total": 120, "page": 2, "limit": 100}}),
+    }
+    seen = []
+
+    async def handler(request):
+        seen.append(dict(request.url.params))
+        return pages[int(request.url.params["page"])]
+
+    client = make_client(handler)
+    polls = await client.sync_all_polls(100, tag=3)
+    assert len(polls) == 120
+    assert seen[0]["guildId"] == "100"
+    assert seen[0]["tag"] == "3"
+    assert len(seen) == 2
+
+
+async def test_sync_all_polls_stops_on_empty_page():
+    async def handler(request):
+        return httpx2.Response(200, json={"data": [], "meta": {"total": 0}})
+
+    client = make_client(handler)
+    assert await client.sync_all_polls(100) == []
