@@ -408,8 +408,8 @@ async def test_schedule_starts_fetches_unpublished_with_start_via_api():
     await cog.schedule_starts()
 
     cog.bot.polls_api.sync_all_polls.assert_awaited_once()
+    assert cog.bot.polls_api.sync_all_polls.await_args.args[0] == 100
     kwargs = cog.bot.polls_api.sync_all_polls.await_args.kwargs
-    assert kwargs["guildId"] == 100
     assert kwargs["has_start"] == "true"
     assert len(created) == 1
 
@@ -423,8 +423,8 @@ async def test_schedule_ends_fetches_active_with_end_via_api():
 
     await cog.schedule_ends()
 
+    assert cog.bot.polls_api.sync_all_polls.await_args.args[0] == 100
     kwargs = cog.bot.polls_api.sync_all_polls.await_args.kwargs
-    assert kwargs["guildId"] == 100
     assert kwargs["has_end"] == "true"
     assert kwargs["active"] == "true"
 

@@ -324,7 +324,7 @@ class PollsCog(commands.Cog, name="Polls"):
         guild_id = self.polls_guild_id()
         guild = await self.fetch_guild_info(guild_id)
         tags = {t["tag"]: t for t in await self.fetch_all_tags()}
-        polls = await self.bot.polls_api.sync_all_polls(guildId=guild_id)
+        polls = await self.bot.polls_api.sync_all_polls(guild_id)
         out = [self.poll_dict(poll, tags.get(poll.tag), guild) for poll in polls]
         if not show_unpublished:
             out = [poll for poll in out if poll["published"]]
@@ -1508,7 +1508,7 @@ class PollsCog(commands.Cog, name="Polls"):
         )
 
     async def schedule_starts(self, *, tag=0, timestamps=[], natural=False):
-        polls = await self.bot.polls_api.sync_all_polls(guildId=self.polls_guild_id(), has_start="true")
+        polls = await self.bot.polls_api.sync_all_polls(self.polls_guild_id(), has_start="true")
         polls = [self.poll_dict(p) for p in polls if not p.published]
 
         for k, v in self.bot.tasks["poll_schedules"]["starts"].items():
@@ -1538,7 +1538,7 @@ class PollsCog(commands.Cog, name="Polls"):
                     ] = self.bot.loop.create_task(self.scheduler(v, True))
 
     async def schedule_ends(self, *, poll_ids: list = [], natural=False):
-        polls = await self.bot.polls_api.sync_all_polls(guildId=self.polls_guild_id(), has_end="true", active="true")
+        polls = await self.bot.polls_api.sync_all_polls(self.polls_guild_id(), has_end="true", active="true")
         polls = [self.poll_dict(p) for p in polls]
 
         for k, v in self.bot.tasks["poll_schedules"]["ends"].items():
@@ -3103,7 +3103,7 @@ class PollsCog(commands.Cog, name="Polls"):
             poll = await self.fetch_poll(poll_id)
 
             if not poll:
-                matches = await self.bot.polls_api.sync_all_polls(guildId=interaction.guild_id, num=poll_id)
+                matches = await self.bot.polls_api.sync_all_polls(interaction.guild_id, num=poll_id)
                 poll = self.poll_dict(matches[0]) if matches else None
 
             managerperms = await self.hasmanagerperms(interaction)
@@ -3166,7 +3166,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
             guildid = await self.fetchguildid(interaction)
 
-            polls = await self.bot.polls_api.sync_all_polls(guildId=guildid, **params)
+            polls = await self.bot.polls_api.sync_all_polls(guildid, **params)
             polls = [
                 self.poll_dict(p)
                 for p in polls
@@ -3283,7 +3283,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
                 if poll_ids:
                     guildid = await self.fetchguildid(interaction)
-                    polls = await self.bot.polls_api.sync_all_polls(guildId=guildid, ids=",".join(str(i) for i in poll_ids))
+                    polls = await self.bot.polls_api.sync_all_polls(guildid, ids=",".join(str(i) for i in poll_ids))
                 else:
                     polls = []
                 polls = [self.poll_dict(p) for p in polls]
@@ -3337,7 +3337,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 guildid = await self.fetchguildid(interaction)
                 guild = await self.fetch_guild_info(guildid)
                 tags = {t["tag"]: t for t in await self.fetch_all_tags()}
-                polls = await self.bot.polls_api.sync_all_polls(guildId=guildid, live="true")
+                polls = await self.bot.polls_api.sync_all_polls(guildid, live="true")
                 polls = [self.poll_dict(p, tags.get(p.tag), guild) for p in polls]
                 polls = [poll for poll in polls if poll["published"]]
                 polls = [
