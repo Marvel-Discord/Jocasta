@@ -302,17 +302,29 @@ class PollsCog(commands.Cog, name="Polls"):
             )
         ]
 
+    def polls_guild_id(self) -> int:
+        if self.guild_ids:
+            return self.guild_ids[0]
+        return self.bot.guilds[0].id
+
+    def polldict(self, poll, tag: dict | None = None, guild: dict | None = None) -> dict:
+        d = poll.model_dump()
+        d["duration"] = poll.end_time - poll.start_time if poll.start_time and poll.end_time else None
+        if tag:
+            d.update(tag)
+        if guild:
+            d.update(guild)
+        return d
+
     async def fetchallpolls(self, showunpublished=False):
-        async with self.acquire_bot_conn() as conn:
-            if showunpublished:
-                return await conn.fetch(
-                    "SELECT * FROM (polls LEFT JOIN pollsinfo ON polls.guild_id = pollsinfo.guild_id) LEFT JOIN pollstags ON polls.tag = pollstags.tag"
-                )
-            else:
-                return await conn.fetch(
-                    "SELECT * FROM (polls LEFT JOIN pollsinfo ON polls.guild_id = pollsinfo.guild_id) LEFT JOIN pollstags ON polls.tag = pollstags.tag "
-                    "WHERE published = true"
-                )
+        guild_id = self.polls_guild_id()
+        guild = await self.fetchguildinfo(guild_id)
+        tags = {t["tag"]: t for t in await self.fetchalltags()}
+        polls = await self.bot.polls_api.sync_all_polls(guildId=guild_id)
+        out = [self.polldict(poll, tags.get(poll.tag), guild) for poll in polls]
+        if not showunpublished:
+            out = [poll for poll in out if poll["published"]]
+        return out
 
     async def fetchpoll(self, poll_id: int):
         async with self.acquire_bot_conn() as conn:
@@ -329,10 +341,13 @@ class PollsCog(commands.Cog, name="Polls"):
         ).fetch_message(poll["message_id"])
 
     async def fetchguildinfo(self, guildid: int):
-        async with self.acquire_bot_conn() as conn:
-            return await conn.fetchrow(
-                "SELECT * FROM pollsinfo WHERE guild_id = $1", guildid
-            )
+        try:
+            guild = await self.bot.polls_api.get_guild(guildid)
+        except PollsAPIError as e:
+            if e.status == 404:
+                return None
+            raise
+        return guild.model_dump()
 
     async def fetchguildinfobymanagechannel(self, channelid: int):
         async with self.acquire_bot_conn() as conn:
@@ -352,9 +367,9 @@ class PollsCog(commands.Cog, name="Polls"):
         async with self.acquire_bot_conn() as conn:
             return conn.fetch("SELECT * FROM pollstags WHERE guild_id = $1", guildid)
 
-    async def fetchalltags(self):
-        async with self.acquire_bot_conn() as conn:
-            return await conn.fetch("SELECT * FROM pollstags")
+    async def fetchalltags(self, **params):
+        tags = await self.bot.polls_api.get_tags(**params)
+        return [tag.model_dump() for tag in tags]
 
     async def tagname(self, tagid: int):
         return (await self.fetchtag(tagid))["name"]
