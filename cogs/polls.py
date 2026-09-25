@@ -300,6 +300,15 @@ class PollsCog(commands.Cog, name="Polls"):
             )
         ]
 
+    def searchmatches(self, poll, tag, published, active, notag):
+        if tag == int(notag) and poll.tag is not None:
+            return False
+        if published is not None and poll.published != published:
+            return False
+        if active is not None and poll.active != active:
+            return False
+        return True
+
     def polls_guild_id(self) -> int:
         if self.guild_ids:
             return self.guild_ids[0]
@@ -3207,14 +3216,12 @@ class PollsCog(commands.Cog, name="Polls"):
             guildid = await self.fetchguildid(interaction)
 
             polls = await self.bot.polls_api.sync_all_polls(guildId=guildid, **params)
-            polls = [self.polldict(p) for p in polls]
+            polls = [
+                self.polldict(p)
+                for p in polls
+                if self.searchmatches(p, tag, published, active, notag)
+            ]
 
-            if tag == int(notag):
-                polls = [poll for poll in polls if poll["tag"] is None]
-            if published is not None:
-                polls = [poll for poll in polls if poll["published"] == published]
-            if active is not None:
-                polls = [poll for poll in polls if poll["active"] == active]
             if keyword:
                 polls = self.keywordsearch(keyword, polls)
 
