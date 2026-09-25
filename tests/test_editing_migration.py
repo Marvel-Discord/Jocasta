@@ -25,6 +25,7 @@ def make_cog():
     cog.poll_start = PollsCog.poll_start._callback.__get__(cog)
     cog.poll_end = PollsCog.poll_end._callback.__get__(cog)
     cog.poll_delete = PollsCog.poll_delete._callback.__get__(cog)
+    cog.poll_edit = PollsCog.poll_edit._callback.__get__(cog)
     return cog
 
 
@@ -158,6 +159,81 @@ async def test_poll_delete_api_error_sends_ephemeral_reply():
         PollsCog.Confirm.wait = original_wait
 
     cog.bot.polls_api.delete_polls.assert_awaited_once_with([42], 1234)
+    assert any(
+        call.kwargs.get("ephemeral") is True
+        for call in interaction.followup.send.await_args_list
+    )
+
+
+async def test_poll_edit_param_path_sends_full_body_with_user():
+    cog = make_cog()
+    poll_dict = cog.poll_dict(make_poll_model(published=False))
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
+    cog.bot.polls_api.update_polls = AsyncMock(return_value=[poll_dict])
+    cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
+    cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
+    cog.pollinfoembed = AsyncMock(return_value=MagicMock())
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.channel_id = 301
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_edit(interaction, 42, question="New question?", opt_1="A1", description="-clear")
+
+    cog.bot.polls_api.update_polls.assert_awaited_once()
+    body = cog.bot.polls_api.update_polls.await_args.args[0][0]
+    assert cog.bot.polls_api.update_polls.await_args.args[1] == 1234
+    assert body["id"] == 42
+    assert body["question"] == "New question?"
+    assert body["choices"] == ["A1", "B"]
+    assert body["description"] is None
+    assert "tag" not in body and "show_voting" not in body and "image" not in body
+
+
+async def test_poll_edit_clear_image_sends_null():
+    cog = make_cog()
+    poll_dict = cog.poll_dict(make_poll_model(published=False, image="http://x"))
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
+    cog.bot.polls_api.update_polls = AsyncMock(return_value=[poll_dict])
+    cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
+    cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
+    cog.pollinfoembed = AsyncMock(return_value=MagicMock())
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.channel_id = 301
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_edit(interaction, 42, image="-clear")
+
+    body = cog.bot.polls_api.update_polls.await_args.args[0][0]
+    assert body["image"] is None
+    assert body["question"] == "Best hero?"
+
+
+async def test_poll_edit_api_error_sends_ephemeral_reply():
+    cog = make_cog()
+    poll_dict = cog.poll_dict(make_poll_model(published=False))
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
+    cog.bot.polls_api.update_polls = AsyncMock(side_effect=PollsAPIError(403, "denied"))
+    cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
+    cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
+    cog.pollinfoembed = AsyncMock(return_value=MagicMock())
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.channel_id = 301
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_edit(interaction, 42, question="X?")
+
     assert any(
         call.kwargs.get("ephemeral") is True
         for call in interaction.followup.send.await_args_list
