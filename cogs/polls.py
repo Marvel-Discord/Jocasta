@@ -3,7 +3,6 @@ import asyncpg
 import datetime as _dt
 import enum
 import math
-import random
 import re
 import traceback
 
@@ -2139,7 +2138,7 @@ class PollsCog(commands.Cog, name="Polls"):
         show_options="Show options in poll message. Defaults to true.",
         show_voting="Show the current state of votes in poll message. Defaults to true.",
     )
-    async def pollscreate(
+    async def poll_create(
         self,
         interaction: discord.Interaction,
         question: str = None,
@@ -2182,27 +2181,17 @@ class PollsCog(commands.Cog, name="Polls"):
                 )
             tag = tag["tag"]
 
-        while True:
-            poll_id = random.randint(10000, 99999)
-            async with self.acquire_bot_conn() as conn:
-                if not conn.fetchrow("SELECT id FROM polls WHERE id = $1", poll_id):
-                    break
+        if tag is None:
+            return await interaction.followup.send(
+                "Polls must have a tag. Please provide one via the `tag` parameter."
+            )
 
         # id (int), num (int), time (datetime), message_id (int), question (str), thread_question (str), choices (str[]), votes (int[]), image (str), published (bool), duration (datetime), guild_id (int), description (str), tag (int), show_question (bool), show_options (bool), show_voting (bool), active (bool), crosspost_message_ids (int[])
 
         poll = {
-            "id": poll_id,
             "question": question,
-            "published": False,
-            "active": False,
             "guild_id": interaction.guild_id,
             "choices": choices,
-            "votes": None,
-            "time": None,
-            "duration": None,
-            "num": None,
-            "message_id": None,
-            "crosspost_message_ids": None,
             "tag": tag,
             "image": image,
             "description": description,
@@ -2309,27 +2298,23 @@ class PollsCog(commands.Cog, name="Polls"):
                 f"Question is too long! Must be less than {self.maxqlength} characters."
             )
 
-        async with self.acquire_bot_conn() as conn:
-            await conn.execute(
-                f"""
-                    INSERT INTO polls
-                        ({", ".join(poll.keys())})
-                    VALUES
-                        ({", ".join(f"${i}" for i in range(1, len(poll) + 1))})
-                """,
-                *poll.values(),
+        try:
+            created = await self.bot.polls_api.create_polls(
+                [poll], interaction.user.id
+            )
+        except PollsAPIError:
+            return await interaction.followup.send(
+                "Something went wrong, please try again", ephemeral=True
             )
 
-        poll = await self.fetch_poll(poll_id)
+        poll = await self.fetch_poll(created[0].id)
         embed = await self.pollinfoembed(poll)
 
         txt = f"Created new poll question: \"{poll['question']}\""
-        if tag is None:
-            txt += "\n***WARNING:** This poll does not have a TAG*"
 
         await interaction.followup.send(txt, embed=embed)
 
-    @pollscreate.autocomplete("tag")
+    @poll_create.autocomplete("tag")
     async def pollscreate_autocomplete_tag(
         self, interaction: discord.Interaction, current: str
     ):

@@ -26,6 +26,7 @@ def make_cog():
     cog.poll_end = PollsCog.poll_end._callback.__get__(cog)
     cog.poll_delete = PollsCog.poll_delete._callback.__get__(cog)
     cog.poll_edit = PollsCog.poll_edit._callback.__get__(cog)
+    cog.poll_create = PollsCog.poll_create._callback.__get__(cog)
     return cog
 
 
@@ -233,6 +234,71 @@ async def test_poll_edit_api_error_sends_ephemeral_reply():
     interaction.followup.send = AsyncMock()
 
     await cog.poll_edit(interaction, 42, question="X?")
+
+    assert any(
+        call.kwargs.get("ephemeral") is True
+        for call in interaction.followup.send.await_args_list
+    )
+
+
+async def test_poll_create_sends_body_without_id_and_uses_assigned_id():
+    cog = make_cog()
+    created = make_poll_model(id=777, published=False)
+    cog.fetchguildid = AsyncMock(return_value=100)
+    cog.validtag = AsyncMock(return_value=make_tag_dict())
+    cog.bot.polls_api.create_polls = AsyncMock(return_value=[created])
+    cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(created))
+    cog.pollinfoembed = AsyncMock(return_value=MagicMock())
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.guild_id = 100
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_create(interaction, question="Q?", opt_1="A", opt_2="B", tag="1")
+
+    cog.bot.polls_api.create_polls.assert_awaited_once()
+    polls_arg, user_arg = cog.bot.polls_api.create_polls.await_args.args
+    assert user_arg == 1234
+    assert "id" not in polls_arg[0]
+    assert polls_arg[0]["question"] == "Q?"
+    assert polls_arg[0]["choices"] == ["A", "B"]
+    assert polls_arg[0]["tag"] == 1
+    assert polls_arg[0]["guild_id"] == 100
+    cog.fetch_poll.assert_awaited_with(777)
+
+
+async def test_poll_create_without_tag_is_rejected():
+    cog = make_cog()
+    cog.fetchguildid = AsyncMock(return_value=100)
+    cog.bot.polls_api.create_polls = AsyncMock()
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.guild_id = 100
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_create(interaction, question="Q?", opt_1="A", opt_2="B")
+
+    cog.bot.polls_api.create_polls.assert_not_awaited()
+    assert "tag" in interaction.followup.send.await_args.args[0]
+
+
+async def test_poll_create_api_error_sends_ephemeral_reply():
+    cog = make_cog()
+    cog.fetchguildid = AsyncMock(return_value=100)
+    cog.validtag = AsyncMock(return_value=make_tag_dict())
+    cog.bot.polls_api.create_polls = AsyncMock(side_effect=PollsAPIError(0, "network error"))
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.guild_id = 100
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_create(interaction, question="Q?", opt_1="A", opt_2="B", tag="1")
 
     assert any(
         call.kwargs.get("ephemeral") is True
