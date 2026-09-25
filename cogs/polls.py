@@ -1579,11 +1579,11 @@ class PollsCog(commands.Cog, name="Polls"):
         async with self.bot.updatemsg_lock:
             if poll["id"] not in self.bot.updatemsg_flags.keys():
                 self.bot.updatemsg_flags[poll["id"]] = True
-                self.bot.loop.create_task(self.loop_updatepollmessage(poll))
+                self.bot.loop.create_task(self.loop_update_poll_message(poll))
             else:
                 self.bot.updatemsg_flags[poll["id"]] = True
 
-    async def loop_updatepollmessage(self, poll):
+    async def loop_update_poll_message(self, poll):
         while self.bot.updatemsg_flags[poll["id"]] == True:
             self.bot.updatemsg_flags[poll["id"]] = False
 
@@ -2845,6 +2845,11 @@ class PollsCog(commands.Cog, name="Polls"):
             elif not clearschedule:
                 await self.schedule_starts(timestamps=[schedule_time])
 
+        if duration and duration != -1 and poll["published"] is False and not poll["time"]:
+            return await interaction.followup.send(
+                "You can't set an end time without a start time!"
+            )
+
         if duration:
             if duration == -1:
                 end = None
@@ -2992,6 +2997,8 @@ class PollsCog(commands.Cog, name="Polls"):
 
         currenttime = discord.utils.utcnow()
 
+        previous_time = poll["time"]
+
         body = {
             "id": poll_id,
             "question": poll["question"],
@@ -3002,6 +3009,11 @@ class PollsCog(commands.Cog, name="Polls"):
             body["end_time"] = (currenttime + _dt.timedelta(seconds=duration)).isoformat()
 
         await self.bot.polls_api.update_polls([body], interaction.user.id)
+
+        if previous_time:
+            await self.schedule_starts(
+                timestamps=[previous_time.timestamp()], tag=poll["tag"]
+            )
 
         result = await self.start_poll(poll["id"])
 

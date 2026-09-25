@@ -284,6 +284,7 @@ async def test_poll_start_stamps_start_time_before_publish():
     cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
     cog.bot.polls_api.update_polls = AsyncMock(return_value=[make_poll_model(published=False)])
     cog.start_poll = AsyncMock(return_value=[[poll_dict, MagicMock()]])
+    cog.schedule_starts = AsyncMock()
 
     interaction = MagicMock()
     interaction.user.id = 1234
@@ -310,6 +311,7 @@ async def test_poll_start_with_duration_includes_end_time():
     cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
     cog.bot.polls_api.update_polls = AsyncMock(return_value=[make_poll_model(published=False)])
     cog.start_poll = AsyncMock(return_value=[[poll_dict, MagicMock()]])
+    cog.schedule_starts = AsyncMock()
 
     interaction = MagicMock()
     interaction.user.id = 1234
@@ -322,6 +324,48 @@ async def test_poll_start_with_duration_includes_end_time():
     assert body["end_time"] is not None
     parsed = datetime.fromisoformat(body["end_time"])
     assert timedelta(hours=1) >= (parsed - datetime.now(timezone.utc)) >= timedelta(minutes=59)
+
+
+async def test_poll_start_cancels_previous_start_schedule():
+    cog = make_cog()
+    old_time = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    poll_dict = cog.poll_dict(make_poll_model(published=False, time=old_time, start_time=old_time))
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
+    cog.bot.polls_api.update_polls = AsyncMock(return_value=[make_poll_model(published=False)])
+    cog.start_poll = AsyncMock(return_value=[[poll_dict, MagicMock()]])
+    cog.schedule_starts = AsyncMock()
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_start(interaction, 42)
+
+    cog.schedule_starts.assert_awaited_once_with(
+        timestamps=[old_time.timestamp()], tag=1
+    )
+    cog.start_poll.assert_awaited_once_with(42)
+
+
+async def test_poll_schedule_duration_without_start_time_is_rejected():
+    cog = make_cog()
+    poll = make_poll_model(published=False, start_time=None, end_time=None, time=None)
+    cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(poll))
+    cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
+    cog.schedule_starts = AsyncMock()
+    cog.bot.polls_api.update_polls = AsyncMock()
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_schedule(interaction, 42, duration=3600)
+
+    cog.bot.polls_api.update_polls.assert_not_awaited()
+    assert "without a start time" in interaction.followup.send.await_args.args[0]
 
 
 def make_threadless_guilds():
@@ -400,7 +444,12 @@ async def test_schedule_starts_fetches_unpublished_with_start_via_api():
     cog.guild_ids = [100]
     scheduled = make_poll_model(published=False)
     cog.bot.polls_api.sync_all_polls = AsyncMock(
-        return_value=[scheduled, make_poll_model(id=2, published=True)]
+        return_value=[
+            scheduled,
+            make_poll_model(
+                id=2, published=True, time=datetime(2030, 6, 1, 12, tzinfo=timezone.utc)
+            ),
+        ]
     )
     created = []
     cog.bot.loop.create_task = lambda coro: (created.append(coro), coro.close())[1]
