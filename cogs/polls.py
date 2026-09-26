@@ -1,5 +1,4 @@
 import asyncio
-import asyncpg
 import datetime as _dt
 import enum
 import math
@@ -15,6 +14,7 @@ from cogs.time import TimeCog
 from config import *
 from funcs.buttonpaginator import *
 from funcs.polls_api import PollsAPIError
+from funcs.poll_ws import PollWebSocketClient, ws_url_from_base
 
 """
 x Create polls
@@ -178,14 +178,16 @@ class PollsCog(commands.Cog, name="Polls"):
 
         self.maxqlength = 200
 
-        self.bot.loop.create_task(self.on_startup_scheduler())
-
-        # Add listener setup
-        self.listener_connection = None
-        self.listening = False
-
-        # Start the listener
-        self.bot.loop.create_task(self.setup_poll_listener())
+        self.poll_ws_client = PollWebSocketClient(
+            self.bot.polls_api,
+            on_poll_update=self.handle_poll_event,
+            on_full_resync=self.resync_from_api,
+        )
+        self.poll_ws_task = self.bot.loop.create_task(
+            self.poll_ws_client.start(
+                ws_url_from_base(polls_api_base_url), polls_api_token
+            )
+        )
 
     findchoice = lambda self, choices, x: [i for i in choices if i.value == x][0]
 
@@ -1075,79 +1077,18 @@ class PollsCog(commands.Cog, name="Polls"):
             "Ignoring exception in command %r", interaction.command.name, exc_info=error
         )
 
-    # PostgreSQL LISTEN/NOTIFY for poll updates #
+    # websocket listener for poll updates #
 
     def listener_log(self, msg):
         if database_listener_logs:
             print(f"[Polls Listener] {msg}")
 
-    async def setup_poll_listener(self):
-        """Set up PostgreSQL LISTEN connection for poll updates"""
-        await self.bot.wait_until_ready()
-
-        while not hasattr(self.bot, "db") or not self.bot.db:
-            await asyncio.sleep(0.1)
-
+    async def handle_poll_event(self, poll_id):
+        """Unified WS event handler: debounce-collapsed fetch-and-reconcile."""
         try:
-            # Create dedicated connection for listening
-            self.listener_connection = await asyncpg.connect(**postgres_credentials)
-
-            # Set platform and start listening
-            await self.listener_connection.execute("SET application_name = 'bot'")
-            await self.listener_connection.add_listener(
-                "poll_updates", self.handle_poll_notification
-            )
-
-            self.listening = True
-            self.listener_log("Started listening for poll updates")
-
-            # Keep connection alive
-            while self.listening:
-                await asyncio.sleep(1)
-
-        except Exception as e:
-            self.listener_log(f"Error setting up listener: {e}")
-            traceback.print_exc()
-            # Retry after delay
-            await asyncio.sleep(30)
-            if self.listening:
-                await self.setup_poll_listener()
-
-    async def handle_poll_notification(self, connection, pid, channel, payload):
-        """Handle incoming poll update notifications"""
-        try:
-            import json
-
-            data = json.loads(payload)
-            table = data.get("table")
-            operation = data.get("operation")
-            poll_id = data.get("id")
-            platform = data.get("platform")
-
-            # Ignore notifications from bot itself
-            if platform == "bot":
-                return
-
-            self.listener_log(
-                f"Received {operation} on {table} for ID {poll_id} from {platform}"
-            )
-
-            # Handle based on table and operation
-            if table == "polls":
-                await self.handle_poll_table_update(poll_id, operation)
-            elif table == "pollsvotes":
-                await self.handle_vote_table_update(poll_id, operation)
-
-        except Exception as e:
-            self.listener_log(f"Error handling notification: {e}")
-            traceback.print_exc()
-
-    async def handle_poll_table_update(self, poll_id, operation):
-        """Handle updates to polls table"""
-        try:
-            if operation == "DELETE":
+            poll = await self.fetch_poll(poll_id)
+            if not poll:
                 self.listener_log(f"Poll {poll_id} was deleted")
-                # Clean up any scheduled tasks
                 for task_type in ["starts", "ends"]:
                     for key, task in list(
                         self.bot.tasks["poll_schedules"][task_type].items()
@@ -1160,33 +1101,28 @@ class PollsCog(commands.Cog, name="Polls"):
                             )
                 return
 
-            # For INSERT/UPDATE, refresh poll data and update message
-            poll = await self.fetch_poll(poll_id)
-            if poll:
-                if poll["published"]:
-                    await self.updatepollmessage(poll)
-                    self.listener_log(f"Updated message for poll {poll_id}")
+            if poll["guild_id"] != self.polls_guild_id():
+                return
 
-                await self.update_poll_scheduling(poll)
-
-        except Exception as e:
-            self.listener_log(f"Error handling poll update for {poll_id}: {e}")
-            traceback.print_exc()
-
-    async def handle_vote_table_update(self, poll_id, operation):
-        """Handle updates to pollsvotes table"""
-        try:
-            # For any vote change, update the poll message
-            poll = await self.fetch_poll(poll_id)
-            if poll and poll["published"]:
+            if poll["published"]:
                 await self.updatepollmessage(poll)
-                self.listener_log(
-                    f"Updated message for poll {poll_id} due to vote change"
-                )
+                self.listener_log(f"Updated message for poll {poll_id}")
+
+            await self.update_poll_scheduling(poll)
 
         except Exception as e:
-            self.listener_log(f"Error handling vote update for {poll_id}: {e}")
+            self.listener_log(f"Error handling event for {poll_id}: {e}")
             traceback.print_exc()
+
+    async def resync_from_api(self):
+        """Full resync on every WS (re)connect: rebuild timers and views."""
+        self.listener_log("Resyncing from API")
+        await asyncio.gather(
+            self.schedule_starts(),
+            self.schedule_ends(),
+            self.on_startup_buttons(),
+            self.on_startup_self_assign(),
+        )
 
     async def update_poll_scheduling(self, poll):
         """Update scheduling for a poll that may have changed timing"""
@@ -1212,23 +1148,13 @@ class PollsCog(commands.Cog, name="Polls"):
         except Exception as e:
             self.listener_log(f"Error updating scheduling for poll {poll['id']}: {e}")
 
-    async def stop_listener(self):
-        """Clean shutdown of the listener"""
-        self.listening = False
-        if hasattr(self, "listener_connection") and self.listener_connection:
-            try:
-                await self.listener_connection.remove_listener(
-                    "poll_updates", self.handle_poll_notification
-                )
-                await self.listener_connection.close()
-                self.listener_log(f"Stopped listening for poll updates")
-            except Exception as e:
-                self.listener_log(f"Error stopping listener: {e}")
+    async def _stop_ws_listener(self):
+        self.poll_ws_task.cancel()
+        await self.poll_ws_client.stop()
 
     def cog_unload(self):
         """Clean up when the cog is unloaded"""
-        if hasattr(self, "listener_connection") and self.listener_connection:
-            asyncio.create_task(self.stop_listener())
+        self._ws_stop_task = self.bot.loop.create_task(self._stop_ws_listener())
 
     @asynccontextmanager
     async def acquire_bot_conn(self):
@@ -1551,14 +1477,6 @@ class PollsCog(commands.Cog, name="Polls"):
                     self.bot.tasks["poll_schedules"]["ends"][p["id"]] = (
                         self.bot.loop.create_task(self.scheduler(p, False))
                     )
-
-    async def on_startup_scheduler(self):
-        while not self.bot.postgresql_loaded:
-            await asyncio.sleep(0.1)
-        self.bot.loop.create_task(self.schedule_starts())
-        self.bot.loop.create_task(self.schedule_ends())
-        self.bot.loop.create_task(self.on_startup_buttons())
-        self.bot.loop.create_task(self.on_startup_self_assign())
 
     async def formatpollmessage(self, poll):
         content = None
