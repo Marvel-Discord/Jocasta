@@ -307,9 +307,15 @@ class PollsCog(commands.Cog, name="Polls"):
             return self.guild_ids[0]
         return self.bot.guilds[0].id
 
-    def poll_dict(self, poll, tag: dict | None = None, guild: dict | None = None) -> dict:
+    def poll_dict(
+        self, poll, tag: dict | None = None, guild: dict | None = None
+    ) -> dict:
         d = poll.model_dump()
-        d["duration"] = poll.end_time - poll.start_time if poll.start_time and poll.end_time else None
+        d["duration"] = (
+            poll.end_time - poll.start_time
+            if poll.start_time and poll.end_time
+            else None
+        )
         if tag:
             d.update(tag)
         if guild:
@@ -472,32 +478,6 @@ class PollsCog(commands.Cog, name="Polls"):
             self.interaction = interaction
             await self.interaction.response.defer()
             self.stop()
-
-    @commands.command()
-    @commands.is_owner()
-    async def pools(self, ctx):
-        async with self.acquire_bot_conn() as conn:
-            polls = await conn.fetch(
-                "SELECT * FROM (polls LEFT JOIN pollsinfo ON polls.guild_id = pollsinfo.guild_id) LEFT JOIN pollstags ON polls.tag = pollstags.tag "
-                "WHERE time < TO_TIMESTAMP(1684627200)"
-                "ORDER BY time ASC"
-            )
-
-            channel = self.bot.get_channel(1214133803107491840)
-
-            for poll in polls:
-                msg_content = await self.formatpollmessage(poll)
-                msg = await channel.send(**msg_content)
-
-                await conn.execute(
-                    "UPDATE polls SET message_id = $1, fallback = true WHERE id = $2",
-                    msg.id,
-                    poll["id"],
-                )
-
-            print("done")
-
-        pass
 
     async def pollinfoembed(self, poll, *, guild=None, tag=None):
         if not guild:
@@ -1190,7 +1170,9 @@ class PollsCog(commands.Cog, name="Polls"):
                 final.append([poll, crosspost_msg])
                 crosspost_ids.append(crosspost_msg.id)
 
-            await self.bot.polls_api.publish_poll(poll["id"], main_msg.id, crosspost_ids)
+            await self.bot.polls_api.publish_poll(
+                poll["id"], main_msg.id, crosspost_ids
+            )
 
         for poll, t in polls:
             if poll["time"]:  # needs to be old time
@@ -1406,7 +1388,9 @@ class PollsCog(commands.Cog, name="Polls"):
                     ] = self.bot.loop.create_task(self.scheduler(v, True))
 
     async def schedule_ends(self, *, poll_ids: list = [], natural=False):
-        polls = await self.bot.polls_api.sync_all_polls(self.polls_guild_id(), has_end="true", active="true")
+        polls = await self.bot.polls_api.sync_all_polls(
+            self.polls_guild_id(), has_end="true", active="true"
+        )
         polls = [self.poll_dict(p) for p in polls]
 
         for k, v in self.bot.tasks["poll_schedules"]["ends"].items():
@@ -1699,9 +1683,7 @@ class PollsCog(commands.Cog, name="Polls"):
     async def cast_vote(self, poll: dict, user, choice: int):
         """Cast, update, or delete a vote via the API (choice -1 = delete)."""
         api_choice = None if choice == -1 else choice
-        counts = await self.bot.polls_api.cast_vote(
-            poll["id"], user.id, api_choice
-        )
+        counts = await self.bot.polls_api.cast_vote(poll["id"], user.id, api_choice)
 
         poll["votes"] = counts.votes
         poll["total_votes"] = counts.total_votes
@@ -1797,8 +1779,7 @@ class PollsCog(commands.Cog, name="Polls"):
         tags = [
             t
             for t in tags
-            if t["end_message_self_assign"]
-            and len(t["end_message_role_ids"]) != 0
+            if t["end_message_self_assign"] and len(t["end_message_role_ids"]) != 0
         ]
 
         for t in tags:
@@ -2158,9 +2139,7 @@ class PollsCog(commands.Cog, name="Polls"):
             )
 
         try:
-            created = await self.bot.polls_api.create_polls(
-                [poll], interaction.user.id
-            )
+            created = await self.bot.polls_api.create_polls([poll], interaction.user.id)
         except PollsAPIError:
             return await interaction.followup.send(
                 "Something went wrong, please try again", ephemeral=True
@@ -2668,7 +2647,12 @@ class PollsCog(commands.Cog, name="Polls"):
             elif not clearschedule:
                 await self.schedule_starts(timestamps=[schedule_time])
 
-        if duration and duration != -1 and poll["published"] is False and not poll["time"]:
+        if (
+            duration
+            and duration != -1
+            and poll["published"] is False
+            and not poll["time"]
+        ):
             return await interaction.followup.send(
                 "You can't set an end time without a start time!"
             )
@@ -2829,7 +2813,9 @@ class PollsCog(commands.Cog, name="Polls"):
             "start_time": currenttime.isoformat(),
         }
         if duration:
-            body["end_time"] = (currenttime + _dt.timedelta(seconds=duration)).isoformat()
+            body["end_time"] = (
+                currenttime + _dt.timedelta(seconds=duration)
+            ).isoformat()
 
         await self.bot.polls_api.update_polls([body], interaction.user.id)
 
@@ -2938,7 +2924,9 @@ class PollsCog(commands.Cog, name="Polls"):
             poll = await self.fetch_poll(poll_id)
 
             if not poll:
-                matches = await self.bot.polls_api.sync_all_polls(interaction.guild_id, num=poll_id)
+                matches = await self.bot.polls_api.sync_all_polls(
+                    interaction.guild_id, num=poll_id
+                )
                 poll = self.poll_dict(matches[0]) if matches else None
 
             managerperms = await self.hasmanagerperms(interaction)
@@ -3110,7 +3098,10 @@ class PollsCog(commands.Cog, name="Polls"):
         else:
             op = False
 
-        votes = {v.poll_id: v.choice for v in await self.bot.polls_api.get_user_votes(user.id)}
+        votes = {
+            v.poll_id: v.choice
+            for v in await self.bot.polls_api.get_user_votes(user.id)
+        }
 
         if poll_id is None:
             if not show_unvoted:
@@ -3118,7 +3109,9 @@ class PollsCog(commands.Cog, name="Polls"):
 
                 if poll_ids:
                     guildid = await self.fetchguildid(interaction)
-                    polls = await self.bot.polls_api.sync_all_polls(guildid, ids=",".join(str(i) for i in poll_ids))
+                    polls = await self.bot.polls_api.sync_all_polls(
+                        guildid, ids=",".join(str(i) for i in poll_ids)
+                    )
                 else:
                     polls = []
                 polls = [self.poll_dict(p) for p in polls]
