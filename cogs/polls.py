@@ -2186,8 +2186,6 @@ class PollsCog(commands.Cog, name="Polls"):
                 "Polls must have a tag. Please provide one via the `tag` parameter."
             )
 
-        # id (int), num (int), time (datetime), message_id (int), question (str), thread_question (str), choices (str[]), votes (int[]), image (str), published (bool), duration (datetime), guild_id (int), description (str), tag (int), show_question (bool), show_options (bool), show_voting (bool), active (bool), crosspost_message_ids (int[])
-
         poll = {
             "question": question,
             "guild_id": interaction.guild_id,
