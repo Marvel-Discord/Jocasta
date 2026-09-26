@@ -432,7 +432,7 @@ async def test_poll_end_command_passes_user_for_early_end():
     cog.end_poll.assert_awaited_once_with(42, end_now=True, user_id=1234)
 
 
-async def test_schedule_starts_fetches_unpublished_with_start_via_api():
+async def test_schedule_starts_requests_unpublished_with_start_from_api():
     cog = make_cog()
     cog.guild_ids = [100]
     scheduled = make_poll_model(published=False)
@@ -453,7 +453,8 @@ async def test_schedule_starts_fetches_unpublished_with_start_via_api():
     assert cog.bot.polls_api.sync_all_polls.await_args.args[0] == 100
     kwargs = cog.bot.polls_api.sync_all_polls.await_args.kwargs
     assert kwargs["has_start"] == "true"
-    assert len(created) == 1
+    assert kwargs["published"] == "false"
+    assert len(created) == 2
 
 
 async def test_schedule_ends_fetches_active_with_end_via_api():

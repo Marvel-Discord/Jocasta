@@ -1433,8 +1433,10 @@ class PollsCog(commands.Cog, name="Polls"):
         )
 
     async def schedule_starts(self, *, tag=0, timestamps=[], natural=False):
-        polls = await self.bot.polls_api.sync_all_polls(self.polls_guild_id(), has_start="true")
-        polls = [self.poll_dict(p) for p in polls if not p.published]
+        polls = await self.bot.polls_api.sync_all_polls(
+            self.polls_guild_id(), has_start="true", published="false"
+        )
+        polls = [self.poll_dict(p) for p in polls]
 
         for k, v in self.bot.tasks["poll_schedules"]["starts"].items():
             if (
