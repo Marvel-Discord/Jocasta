@@ -213,7 +213,7 @@ class PollsAPIClient:
             "POST",
             f"/bot/tags/{tag_id}/end-message-latest-ids",
             Op.SET_TAG_END_MESSAGE_LATEST_IDS,
-            json={"end_message_latest_ids": message_ids},
+            json={"end_message_latest_ids": [str(i) for i in message_ids]},
         )
         return response.json()
 
@@ -224,7 +224,7 @@ class PollsAPIClient:
             "POST",
             f"/bot/polls/{poll_id}/publish",
             Op.PUBLISH_POLL,
-            json={"message_id": message_id, "crosspost_message_ids": crosspost_ids},
+            json={"message_id": str(message_id), "crosspost_message_ids": [str(i) for i in crosspost_ids]},
         )
         return Poll.model_validate(response.json())
 
@@ -237,7 +237,7 @@ class PollsAPIClient:
             "POST",
             f"/bot/polls/{poll_id}/crosspost",
             Op.CROSSPOST_POLL,
-            json={"message_id": message_id},
+            json={"message_id": str(message_id)},
         )
         return Poll.model_validate(response.json())
 

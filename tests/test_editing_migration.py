@@ -266,7 +266,8 @@ async def test_poll_create_sends_body_without_id_and_uses_assigned_id():
     assert polls_arg[0]["question"] == "Q?"
     assert polls_arg[0]["choices"] == ["A", "B"]
     assert polls_arg[0]["tag"] == 1
-    assert polls_arg[0]["guild_id"] == 100
+    assert polls_arg[0]["guild_id"] == "100"
+    assert isinstance(polls_arg[0]["guild_id"], str)
     cog.fetch_poll.assert_awaited_with(777)
 
 

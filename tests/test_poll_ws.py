@@ -146,6 +146,17 @@ async def test_tags_table_frame_is_ignored(monkeypatch):
         assert updates == [42]
 
 
+async def test_votes_table_frame_still_triggers_poll_update(monkeypatch):
+    votes_frame = json.dumps({"table": "votes", "operation": "update", "id": 42})
+    client, updates, resyncs, calls = make_ws_client(
+        monkeypatch, [FakeWS([HELLO, votes_frame]), OSError("down")]
+    )
+    async for task in run_and_stop(client):
+        await wait_until(lambda: len(updates) >= 1)
+        await asyncio.sleep(0.2)
+        assert updates == [42]
+
+
 async def test_disconnect_then_reconnect_resyncs_again(monkeypatch):
     client, updates, resyncs, calls = make_ws_client(
         monkeypatch,

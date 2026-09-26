@@ -2102,7 +2102,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         poll = {
             "question": question,
-            "guild_id": interaction.guild_id,
+            "guild_id": str(interaction.guild_id),
             "choices": choices,
             "tag": tag,
             "image": image,
