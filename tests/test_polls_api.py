@@ -440,6 +440,21 @@ async def test_sync_all_polls_stops_on_empty_page():
     assert await client.sync_all_polls(100) == []
 
 
+async def test_set_tag_end_message_latest_ids_posts_and_returns_tag():
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx2.Response(200, json=tag_payload(tag=3, end_message_latest_ids=[7, 8]))
+
+    client = make_client(handler)
+    result = await client.set_tag_end_message_latest_ids(3, [7, 8])
+    assert seen["path"] == "/bot/tags/3/end-message-latest-ids"
+    assert seen["body"] == {"end_message_latest_ids": [7, 8]}
+    assert result["tag"] == 3
+
+
 async def test_sync_all_polls_translates_positional_guild_id_to_guildid_param():
     seen = []
 

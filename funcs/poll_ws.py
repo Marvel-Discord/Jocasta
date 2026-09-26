@@ -52,6 +52,8 @@ class PollWebSocketClient:
                         except Exception as e:
                             print(f"[PollWS] Discarding malformed frame: {e}")
                             continue
+                        if frame.table not in ("polls", "votes"):
+                            continue
                         self._dirty[frame.id] = time.monotonic()
             except asyncio.CancelledError:
                 raise

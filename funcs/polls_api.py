@@ -37,6 +37,7 @@ class Op(StrEnum):
     UPDATE_POLLS = auto()
     DELETE_POLLS = auto()
     UPDATE_BY_TAG = auto()
+    SET_TAG_END_MESSAGE_LATEST_IDS = auto()
     PUBLISH_POLL = auto()
     END_POLL = auto()
     CROSSPOST_POLL = auto()
@@ -47,6 +48,7 @@ RETRY_SAFE = frozenset({
     Op.GET_GUILD, Op.GET_GUILD_CHANNELS, Op.GET_GUILD_ROLES, Op.GET_USER_VOTES,
     Op.CAST_VOTE, Op.PUBLISH_POLL, Op.END_POLL,
     Op.UPDATE_POLLS, Op.DELETE_POLLS, Op.UPDATE_BY_TAG,
+    Op.SET_TAG_END_MESSAGE_LATEST_IDS,
 })
 
 READ_OPS = frozenset({
@@ -205,6 +207,15 @@ class PollsAPIClient:
             json={"tag": tag, **fields},
         )
         return [Poll.model_validate(item) for item in response.json()["polls"]]
+
+    async def set_tag_end_message_latest_ids(self, tag_id: int, message_ids: list[int]) -> dict:
+        response = await self._request(
+            "POST",
+            f"/bot/tags/{tag_id}/end-message-latest-ids",
+            Op.SET_TAG_END_MESSAGE_LATEST_IDS,
+            json={"end_message_latest_ids": message_ids},
+        )
+        return response.json()
 
     # Lifecycle (system ops — no user header):
 

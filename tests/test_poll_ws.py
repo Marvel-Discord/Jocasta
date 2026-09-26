@@ -135,6 +135,17 @@ async def test_different_polls_each_get_their_own_update(monkeypatch):
         assert sorted(updates) == [7, 42]
 
 
+async def test_tags_table_frame_is_ignored(monkeypatch):
+    tags_frame = json.dumps({"table": "tags", "operation": "update", "id": 9})
+    client, updates, resyncs, calls = make_ws_client(
+        monkeypatch, [FakeWS([HELLO, tags_frame, frame(42)]), OSError("down")]
+    )
+    async for task in run_and_stop(client):
+        await wait_until(lambda: len(updates) >= 1)
+        await asyncio.sleep(0.2)
+        assert updates == [42]
+
+
 async def test_disconnect_then_reconnect_resyncs_again(monkeypatch):
     client, updates, resyncs, calls = make_ws_client(
         monkeypatch,
