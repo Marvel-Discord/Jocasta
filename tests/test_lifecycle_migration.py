@@ -256,6 +256,82 @@ async def test_start_polls_publishes_after_sending_with_collected_ids():
     assert final[0][0]["id"] == 42 and final[1][0]["id"] == 42
 
 
+async def test_start_polls_end_message_records_latest_ids_via_api():
+    cog = make_cog()
+    tag = make_tag_dict(
+        crosspost_channels=[201],
+        end_message="Thanks for voting!",
+        end_message_latest_ids=[],
+    )
+    poll_dict = cog.poll_dict(make_poll_model())
+    cog.formatpollmessage = AsyncMock(return_value={"content": None, "embed": None, "view": None})
+    cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.fetch_tag = AsyncMock(return_value=tag)
+    cog.fetchcolourbyid = AsyncMock(return_value=1)
+    cog.bot.polls_api.publish_poll = AsyncMock(return_value=poll_dict)
+    cog.bot.polls_api.set_tag_end_message_latest_ids = AsyncMock()
+    cog.schedule_starts = AsyncMock()
+    cog.schedule_ends = AsyncMock()
+    cog.updatepollmessage = AsyncMock()
+
+    main_channel = make_channel(300, msg_id=7001)
+    crosspost_channel = make_channel(201, msg_id=7002)
+    cog.bot.get_channel = MagicMock(
+        side_effect=lambda cid: {300: main_channel, 201: crosspost_channel}.get(cid)
+    )
+
+    await cog.start_polls([42])
+
+    cog.bot.polls_api.set_tag_end_message_latest_ids.assert_awaited_once_with(
+        1, [7001, 7002]
+    )
+
+
+async def test_start_polls_end_message_replace_prunes_via_api():
+    cog = make_cog()
+    tag = make_tag_dict(
+        crosspost_channels=[201],
+        end_message="Thanks for voting!",
+        end_message_replace=True,
+    )
+    other = make_tag_dict(
+        tag=2,
+        name="other",
+        channel_id=300,
+        crosspost_channels=[],
+        end_message_latest_ids=[999],
+    )
+    poll_dict = cog.poll_dict(make_poll_model())
+    cog.formatpollmessage = AsyncMock(return_value={"content": None, "embed": None, "view": None})
+    cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.fetch_tag = AsyncMock(return_value=tag)
+    cog.fetch_all_tags = AsyncMock(return_value=[other])
+    cog.fetchcolourbyid = AsyncMock(return_value=1)
+    cog.bot.polls_api.publish_poll = AsyncMock(return_value=poll_dict)
+    cog.bot.polls_api.set_tag_end_message_latest_ids = AsyncMock()
+    cog.schedule_starts = AsyncMock()
+    cog.schedule_ends = AsyncMock()
+    cog.updatepollmessage = AsyncMock()
+
+    main_channel = make_channel(300, msg_id=7001)
+    old_msg = MagicMock()
+    old_msg.delete = AsyncMock()
+    main_channel.fetch_message = AsyncMock(return_value=old_msg)
+    crosspost_channel = make_channel(201, msg_id=7002)
+    cog.bot.get_channel = MagicMock(
+        side_effect=lambda cid: {300: main_channel, 201: crosspost_channel}.get(cid)
+    )
+
+    await cog.start_polls([42])
+
+    cog.fetch_all_tags.assert_awaited_once_with(end_message_replace="true")
+    old_msg.delete.assert_awaited_once()
+    calls = cog.bot.polls_api.set_tag_end_message_latest_ids.await_args_list
+    assert [c.args for c in calls] == [(2, []), (1, [7001, 7002])]
+
+
 async def test_start_polls_no_crossposts_publishes_empty_array():
     cog = make_cog()
     tag = make_tag_dict(crosspost_channels=[])
