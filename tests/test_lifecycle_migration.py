@@ -253,6 +253,7 @@ async def test_start_polls_publishes_after_sending_with_collected_ids():
     main_channel.send.assert_awaited_once()
     crosspost_channel.send.assert_awaited_once()
     assert len(final) == 2
+    assert final[0][0]["id"] == 42 and final[1][0]["id"] == 42
 
 
 async def test_start_polls_no_crossposts_publishes_empty_array():
@@ -368,15 +369,6 @@ async def test_poll_schedule_duration_without_start_time_is_rejected():
     assert "without a start time" in interaction.followup.send.await_args.args[0]
 
 
-def make_threadless_guilds():
-    guild = MagicMock()
-    guild.get_channel_or_thread = MagicMock(return_value=None)
-    cog_guild = MagicMock()
-    cog_guild.id = 100
-    guild.return_value = guild
-    return [guild]
-
-
 async def test_end_poll_natural_uses_lifecycle_endpoint():
     cog = make_cog()
     poll_dict = cog.poll_dict(make_poll_model())
@@ -419,6 +411,7 @@ async def test_end_poll_early_end_overwrites_end_time_via_update():
     assert body["question"] == "Best hero?"
     assert body["choices"] == ["A", "B"]
     assert body["end_time"] is not None
+    assert datetime.fromisoformat(body["end_time"]) < datetime(2030, 1, 1, tzinfo=timezone.utc)
     assert cog.bot.polls_api.update_polls.await_args.args[1] == 1234
 
 
