@@ -3449,7 +3449,7 @@ class PollsCog(commands.Cog, name="Polls"):
     @pollsgroup.command(name="bulkedit")
     @poll_manager_only()
     @valid_guild_only()
-    async def pollbulkedit(
+    async def poll_bulk_edit(
         self,
         interaction: discord.Interaction,
         tag: str,
@@ -3469,45 +3469,34 @@ class PollsCog(commands.Cog, name="Polls"):
         if tag is None:
             return await interaction.followup.send("Please select an available tag.")
 
-        async def update(name, *values):
-            if not isinstance(name, list):
-                name = [name]
-            if len(name) != len(values):
-                raise Exception
-
-            txt = [f"{k} = ${i}" for k, i in zip(name, list(range(2, len(values) + 2)))]
-
-            async with self.acquire_bot_conn() as conn:
-                await conn.execute(
-                    f"UPDATE polls SET {', '.join(txt)} WHERE tag = $1",
-                    tag["tag"],
-                    *values,
-                )
-
-        names = []
-        values = []
-
-        def append(name, value):
-            names.append(name)
-            values.append(value)
-
         txt = ["Updating polls:"]
 
         if show_question is not None:
-            append("show_question", show_question)
             txt.append(f"`show_question = {show_question}`")
         if show_options is not None:
-            append("show_options", show_options)
             txt.append(f"`show_options = {show_options}`")
         if show_voting is not None:
-            append("show_voting", show_voting)
             txt.append(f"`show_voting = {show_voting}`")
         txt.append("")
 
-        await update(names, *values)
+        fields = {}
+        if show_question is not None:
+            fields["show_question"] = show_question
+        if show_options is not None:
+            fields["show_options"] = show_options
+        if show_voting is not None:
+            fields["show_voting"] = show_voting
 
-        async with self.acquire_bot_conn() as conn:
-            polls = await conn.fetch("SELECT * FROM polls WHERE tag = $1", tag["tag"])
+        try:
+            updated = await self.bot.polls_api.update_by_tag(
+                tag["tag"], fields, interaction.user.id
+            )
+        except PollsAPIError:
+            return await interaction.followup.send(
+                "Something went wrong, please try again", ephemeral=True
+            )
+
+        polls = [self.poll_dict(p) for p in updated]
 
         for poll in polls:
             txt.append(f"- `{poll['id']}` {poll['question']}")
@@ -3520,7 +3509,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     # await msg.edit(content = "\n".join(txt + ["*Updated!*"]))
 
-    @pollbulkedit.autocomplete("tag")
+    @poll_bulk_edit.autocomplete("tag")
     async def pollbulkedit_autocomplete_tag(
         self, interaction: discord.Interaction, current: str
     ):

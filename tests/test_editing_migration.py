@@ -27,6 +27,7 @@ def make_cog():
     cog.poll_delete = PollsCog.poll_delete._callback.__get__(cog)
     cog.poll_edit = PollsCog.poll_edit._callback.__get__(cog)
     cog.poll_create = PollsCog.poll_create._callback.__get__(cog)
+    cog.poll_bulk_edit = PollsCog.poll_bulk_edit._callback.__get__(cog)
     return cog
 
 
@@ -304,3 +305,28 @@ async def test_poll_create_api_error_sends_ephemeral_reply():
         call.kwargs.get("ephemeral") is True
         for call in interaction.followup.send.await_args_list
     )
+
+
+async def test_poll_bulk_edit_updates_by_tag_and_lists_response():
+    cog = make_cog()
+    cog.fetchguildid = AsyncMock(return_value=100)
+    cog.validtag = AsyncMock(return_value=make_tag_dict())
+    updated = make_poll_model(id=42)
+    cog.bot.polls_api.update_by_tag = AsyncMock(return_value=[updated])
+    cog.updatepollmessage = AsyncMock()
+
+    interaction = MagicMock()
+    interaction.user.id = 1234
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.poll_bulk_edit(interaction, "1", show_voting=False)
+
+    cog.bot.polls_api.update_by_tag.assert_awaited_once()
+    args = cog.bot.polls_api.update_by_tag.await_args.args
+    assert args[0] == 1
+    assert args[1] == {"show_voting": False}
+    assert args[2] == 1234
+    cog.updatepollmessage.assert_awaited_once()
+    sent = interaction.followup.send.await_args.args[0]
+    assert "`42`" in sent and "`show_voting = False`" in sent
