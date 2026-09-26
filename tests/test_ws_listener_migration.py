@@ -169,6 +169,45 @@ async def test_resync_from_api_runs_the_four_tasks():
     cog.on_startup_self_assign.assert_awaited_once()
 
 
+async def test_resync_from_api_routes_the_four_tasks_through_gather(monkeypatch):
+    cog = make_cog()
+
+    async def schedule_starts():
+        pass
+
+    async def schedule_ends():
+        pass
+
+    async def on_startup_buttons():
+        pass
+
+    async def on_startup_self_assign():
+        pass
+
+    cog.schedule_starts = schedule_starts
+    cog.schedule_ends = schedule_ends
+    cog.on_startup_buttons = on_startup_buttons
+    cog.on_startup_self_assign = on_startup_self_assign
+
+    routed = []
+
+    async def fake_gather(*aws, **kwargs):
+        routed.extend(aw.__name__ for aw in aws)
+        for aw in aws:
+            aw.close()
+
+    monkeypatch.setattr("cogs.polls.asyncio.gather", fake_gather)
+
+    await cog.resync_from_api()
+
+    assert routed == [
+        "schedule_starts",
+        "schedule_ends",
+        "on_startup_buttons",
+        "on_startup_self_assign",
+    ]
+
+
 def test_init_creates_ws_client_with_unified_handler():
     cog = make_cog()
     assert cog.poll_ws_client is not None
