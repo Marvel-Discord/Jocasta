@@ -2153,7 +2153,7 @@ class PollsCog(commands.Cog, name="Polls"):
             interaction = view.interaction
 
         if len(poll["question"]) > self.maxqlength:
-            return await interaction.followup.send_message(
+            return await interaction.followup.send(
                 f"Question is too long! Must be less than {self.maxqlength} characters."
             )
 
@@ -2452,7 +2452,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 image = image.url
 
             if question and len(question) > self.maxqlength:
-                return await interaction.followup.send_message(
+                return await interaction.followup.send(
                     f"Question is too long! Must be less than {self.maxqlength} characters."
                 )
 
