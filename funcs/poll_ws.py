@@ -12,6 +12,12 @@ RECONNECT_BACKOFF_MAX = 60.0
 DEBOUNCE_CHECK_INTERVAL = 0.25
 
 
+def ws_url_from_base(base_url: str) -> str:
+    if base_url.startswith("https://"):
+        return base_url.replace("https://", "wss://", 1) + "/bot/events"
+    return base_url.replace("http://", "ws://", 1) + "/bot/events"
+
+
 class PollWebSocketClient:
     def __init__(self, api_client, on_poll_update, on_full_resync):
         """on_poll_update(poll_id) — called after the debounce window expires for a poll.
@@ -63,4 +69,9 @@ class PollWebSocketClient:
             expired = [pid for pid, ts in self._dirty.items() if now - ts >= DEBOUNCE_SECONDS]
             for poll_id in expired:
                 del self._dirty[poll_id]
-                await self.on_poll_update(poll_id)
+                try:
+                    await self.on_poll_update(poll_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    print(f"[PollWS] Handler error for poll {poll_id}: {e}")
