@@ -5,7 +5,7 @@ import time
 import websockets
 
 import funcs.poll_ws as poll_ws
-from funcs.poll_ws import PollWebSocketClient
+from funcs.poll_ws import PollWebSocketClient, ws_url_from_base
 
 HELLO = json.dumps({"type": "connected"})
 
@@ -148,3 +148,44 @@ async def test_stop_cancels_debounce_loop_and_exits_start(monkeypatch):
             await asyncio.wait_for(task, timeout=2.0)
         except asyncio.TimeoutError:
             task.cancel()
+
+
+def test_ws_url_from_base_http():
+    assert ws_url_from_base("http://localhost:8000/api/v1") == "ws://localhost:8000/api/v1/bot/events"
+
+
+def test_ws_url_from_base_https():
+    assert ws_url_from_base("https://polls.example.com/api/v1") == "wss://polls.example.com/api/v1/bot/events"
+
+
+async def test_debounce_loop_survives_handler_exception(monkeypatch):
+    monkeypatch.setattr(poll_ws, "DEBOUNCE_SECONDS", 0.05)
+    monkeypatch.setattr(poll_ws, "DEBOUNCE_CHECK_INTERVAL", 0.02)
+
+    calls = []
+
+    async def flaky_first(poll_id):
+        calls.append(("boom", poll_id))
+        raise RuntimeError("handler exploded")
+
+    client = PollWebSocketClient(None, flaky_first, None)
+    task = asyncio.create_task(client._debounce_loop())
+
+    client._dirty[42] = time.monotonic() - 1
+    try:
+        await wait_until(lambda: ("boom", 42) in calls)
+        assert 42 not in client._dirty
+
+        async def recovered(poll_id):
+            calls.append(("ok", poll_id))
+
+        client.on_poll_update = recovered
+        client._dirty[42] = time.monotonic() - 1
+        await wait_until(lambda: ("ok", 42) in calls)
+        assert not task.done()
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
