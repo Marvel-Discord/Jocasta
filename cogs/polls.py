@@ -1117,10 +1117,12 @@ class PollsCog(commands.Cog, name="Polls"):
     async def resync_from_api(self):
         """Full resync on every WS (re)connect: rebuild timers and views."""
         self.listener_log("Resyncing from API")
-        await self.schedule_starts()
-        await self.schedule_ends()
-        await self.on_startup_buttons()
-        await self.on_startup_self_assign()
+        await asyncio.gather(
+            self.schedule_starts(),
+            self.schedule_ends(),
+            self.on_startup_buttons(),
+            self.on_startup_self_assign(),
+        )
 
     async def update_poll_scheduling(self, poll):
         """Update scheduling for a poll that may have changed timing"""

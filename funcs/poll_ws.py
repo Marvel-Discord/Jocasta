@@ -13,9 +13,10 @@ DEBOUNCE_CHECK_INTERVAL = 0.25
 
 
 def ws_url_from_base(base_url: str) -> str:
-    if base_url.startswith("https://"):
-        return base_url.replace("https://", "wss://", 1) + "/bot/events"
-    return base_url.replace("http://", "ws://", 1) + "/bot/events"
+    base = base_url.rstrip("/")
+    if base.startswith("https://"):
+        return base.replace("https://", "wss://", 1) + "/bot/events"
+    return base.replace("http://", "ws://", 1) + "/bot/events"
 
 
 class PollWebSocketClient:
@@ -40,13 +41,17 @@ class PollWebSocketClient:
                     ws_url,
                     additional_headers={"Authorization": f"Bearer {token}"},
                 ) as ws:
-                    backoff = RECONNECT_BACKOFF_INITIAL
                     hello = json.loads(await ws.recv())
                     if hello.get("type") != "connected":
                         raise ConnectionError("Unexpected handshake")
                     await self.on_full_resync()
+                    backoff = RECONNECT_BACKOFF_INITIAL
                     async for message in ws:
-                        frame = BotEventFrame.model_validate_json(message)
+                        try:
+                            frame = BotEventFrame.model_validate_json(message)
+                        except Exception as e:
+                            print(f"[PollWS] Discarding malformed frame: {e}")
+                            continue
                         self._dirty[frame.id] = time.monotonic()
             except asyncio.CancelledError:
                 raise
