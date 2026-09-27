@@ -326,7 +326,7 @@ async def test_start_polls_end_message_replace_prunes_via_api():
 
     await cog.start_polls([42])
 
-    cog.fetch_all_tags.assert_awaited_once_with(end_message_replace="true")
+    cog.fetch_all_tags.assert_awaited_once_with(end_message_replace=True)
     old_msg.delete.assert_awaited_once()
     calls = cog.bot.polls_api.set_tag_end_message_latest_ids.await_args_list
     assert [c.args for c in calls] == [(2, []), (1, [7001, 7002])]
@@ -528,8 +528,8 @@ async def test_schedule_starts_requests_unpublished_with_start_from_api():
     cog.bot.polls_api.sync_all_polls.assert_awaited_once()
     assert cog.bot.polls_api.sync_all_polls.await_args.args[0] == 100
     kwargs = cog.bot.polls_api.sync_all_polls.await_args.kwargs
-    assert kwargs["has_start"] == "true"
-    assert kwargs["published"] == "false"
+    assert kwargs["has_start"] is True
+    assert kwargs["published"] is False
     assert len(created) == 2
 
 
@@ -544,8 +544,8 @@ async def test_schedule_ends_fetches_active_with_end_via_api():
 
     assert cog.bot.polls_api.sync_all_polls.await_args.args[0] == 100
     kwargs = cog.bot.polls_api.sync_all_polls.await_args.kwargs
-    assert kwargs["has_end"] == "true"
-    assert kwargs["active"] == "true"
+    assert kwargs["has_end"] is True
+    assert kwargs["active"] is True
 
 
 def test_updatevotes_is_gone():

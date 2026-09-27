@@ -507,9 +507,24 @@ async def test_sync_all_polls_translates_positional_guild_id_to_guildid_param():
         )
 
     client = make_client(handler)
-    polls = await client.sync_all_polls(100, has_start="true", active="true")
+    polls = await client.sync_all_polls(100, has_start=True, active=True)
     assert len(polls) == 1
     assert len(seen) == 1
     assert seen[0]["guildId"] == "100"
     assert seen[0]["has_start"] == "true"
     assert seen[0]["active"] == "true"
+
+
+async def test_boolean_false_params_normalize_to_false_on_the_wire():
+    seen = []
+
+    async def handler(request):
+        seen.append(dict(request.url.params))
+        return httpx2.Response(
+            200,
+            json={"data": [poll_payload()], "meta": {"total": 1, "page": 1, "limit": 100}},
+        )
+
+    client = make_client(handler)
+    await client.sync_all_polls(100, published=False)
+    assert seen[0]["published"] == "false"
