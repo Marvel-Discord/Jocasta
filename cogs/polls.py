@@ -3315,7 +3315,7 @@ class PollsCog(commands.Cog, name="Polls"):
                         name="No votes",
                         value=f"{'''You haven't''' if op else f'''{user.name} hasn't'''} voted for anything yet!"
                         + (
-                            f"Use `/pollsme show_unvoted: true` to see all the polls you're able to vote on!"
+                            f"Use `/polls me show_unvoted: true` to see all the polls you're able to vote on!"
                             if op
                             else ""
                         ),
@@ -3582,7 +3582,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 "start_schedule": "Start schedules",
                 "end_schedule": "End schedules",
                 "update_msg": "Update poll messages",
-                "update_selfassign": "Update self-assign buttons",
+                "update_self_assign": "Update self-assign buttons",
             }.items()
         }
 
@@ -3613,16 +3613,16 @@ class PollsCog(commands.Cog, name="Polls"):
 
         msg = await interaction.followup.send(generate_txt(), wait=True)
 
-        refreshpolls = lambda: self.search_polls_by_keyword("")
-        polls = await refreshpolls()
+        refresh_polls = lambda: self.search_polls_by_keyword("")
+        polls = await refresh_polls()
 
         await task(self.schedule_starts, "start_schedule")
 
         await task(self.schedule_ends, "end_schedule")
 
         async def update_msg():
-            pollfilter = "published" if include_ended else "active"
-            filtered = [i for i in polls if i[pollfilter]]
+            poll_filter = "published" if include_ended else "active"
+            filtered = [i for i in polls if i[poll_filter]]
             if tag:
                 filtered = [i for i in polls if i["tag"] == tag]
             filtered.sort(key=lambda x: discord.utils.utcnow() - x["time"])
@@ -3632,12 +3632,12 @@ class PollsCog(commands.Cog, name="Polls"):
 
         await task(update_msg, "update_msg")
 
-        async def update_selfassign():
+        async def update_self_assign():
             await self.on_startup_self_assign()
 
-        await task(update_selfassign, "update_selfassign")
+        await task(update_self_assign, "update_self_assign")
 
-        # polls = await refreshpolls()
+        # polls = await refresh_polls()
 
         print("~~~ End SYNC ~~~")
 
