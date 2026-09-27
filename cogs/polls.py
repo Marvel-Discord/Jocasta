@@ -18,7 +18,13 @@ from discord.app_commands.tree import _log
 from discord.ext import commands
 
 from cogs.time import TimeCog
-from config import database_listener_logs, global_slashies, guild_ids, polls_api_base_url, polls_api_token
+from config import (
+    database_listener_logs,
+    global_slashies,
+    guild_ids,
+    polls_api_base_url,
+    polls_api_token,
+)
 from funcs.buttonpaginator import BaseButtonPaginator
 from funcs.polls_api import PollsAPIError
 from funcs.polls_api_models import Poll
@@ -35,7 +41,7 @@ x Start polls
 x End polls
 
 x SQL DB
-x Slashies
+x Slash commands
 x Schedule timer
 x Startup timer
   x Check on threads
@@ -96,7 +102,7 @@ x ditto for schedule embed
 x format duration in info embed
 x new embed for pretty
 
-x fix search with better regex or smth
+x fix search with better regex or something
 
 x set up better config
 
@@ -251,6 +257,7 @@ class PollsCog(commands.Cog, name="Polls"):
         "<:G_p:1013463930204594206>",
         "<:H_p:1013463932171718666>",
     ]
+
     def choice_format(self, x: int) -> str:
         return self.choice_formats[x]
 
@@ -422,9 +429,7 @@ class PollsCog(commands.Cog, name="Polls"):
         tag = await self.fetch_tag(tag_id)
         return tag["colour"] if tag else None
 
-    async def fetch_colour_by_id(
-        self, guild_id: int, tag_id: int | None
-    ) -> int | None:
+    async def fetch_colour_by_id(self, guild_id: int, tag_id: int | None) -> int | None:
         guild = await self.fetch_guild_info(guild_id)
         tag = await self.fetch_tag(tag_id)
 
@@ -468,7 +473,9 @@ class PollsCog(commands.Cog, name="Polls"):
             interaction.user, interaction.guild_id, interaction.channel_id
         )
 
-    async def has_manager_perms_by_user_and_ids(self, user, guild_id, channel_id=None) -> list[int]:
+    async def has_manager_perms_by_user_and_ids(
+        self, user, guild_id, channel_id=None
+    ) -> list[int]:
         guild = await self.fetch_guild_info(guild_id)
         if not guild:
             return []
@@ -580,7 +587,9 @@ class PollsCog(commands.Cog, name="Polls"):
                 value=f"<t:{int(poll['time'].timestamp())}:F> (`{int(poll['time'].timestamp())}`)",
             )
         if poll["duration"]:
-            embed.add_field(name="Duration", value=self.format_duration(poll["duration"]))
+            embed.add_field(
+                name="Duration", value=self.format_duration(poll["duration"])
+            )
 
         if poll["message_id"]:
             try:
@@ -1058,7 +1067,8 @@ class PollsCog(commands.Cog, name="Polls"):
         if isinstance(error, app_commands.errors.CheckFailure):
             guild = (
                 await self.fetch_guild_info(interaction.guild_id)
-                if interaction.guild_id is not None and await self.valid_guild(interaction)
+                if interaction.guild_id is not None
+                and await self.valid_guild(interaction)
                 else None
             )
             if guild is not None:
@@ -2138,11 +2148,7 @@ class PollsCog(commands.Cog, name="Polls"):
         ]
 
         image_value: str | Attachment | None = image
-        if (
-            image
-            and image.content_type
-            and image.content_type.split("/")[0] == "image"
-        ):
+        if image and image.content_type and image.content_type.split("/")[0] == "image":
             image_value = image.url
         elif image_url:
             image_value = image_url
@@ -2928,7 +2934,10 @@ class PollsCog(commands.Cog, name="Polls"):
         duration="Duration for poll to run. Can pass Epoch timestamp (UTC) as the ending time instead. Can give number of seconds as raw value.",
     )
     async def poll_start(
-        self, interaction: discord.Interaction, poll_id: int, duration: int | None = None
+        self,
+        interaction: discord.Interaction,
+        poll_id: int,
+        duration: int | None = None,
     ):
         """Starts the voting for a poll question."""
 
@@ -3045,7 +3054,9 @@ class PollsCog(commands.Cog, name="Polls"):
     async def pollend_autocomplete_poll_id(
         self, interaction: discord.Interaction, current: str
     ):
-        return await self.autocomplete_search_by_poll_id(interaction, current, active=True)
+        return await self.autocomplete_search_by_poll_id(
+            interaction, current, active=True
+        )
 
     @polls_group.command(name="search")
     @valid_guild_only()
@@ -3297,9 +3308,7 @@ class PollsCog(commands.Cog, name="Polls"):
                     assert colour_guild_id is not None
                     embed = discord.Embed(
                         title=f"{user.name}'s Polls",
-                        colour=await self.fetch_colour_by_id(
-                            colour_guild_id, None
-                        ),
+                        colour=await self.fetch_colour_by_id(colour_guild_id, None),
                         timestamp=discord.utils.utcnow(),
                     )
                     embed.add_field(
@@ -3366,9 +3375,7 @@ class PollsCog(commands.Cog, name="Polls"):
                     assert colour_guild_id is not None
                     embed = discord.Embed(
                         title=f"{user.name}'s Polls",
-                        colour=await self.fetch_colour_by_id(
-                            colour_guild_id, None
-                        ),
+                        colour=await self.fetch_colour_by_id(colour_guild_id, None),
                         timestamp=discord.utils.utcnow(),
                     )
                     embed.add_field(
@@ -3415,9 +3422,7 @@ class PollsCog(commands.Cog, name="Polls"):
             paginator_cls.user = user
             colour_guild_id = await self.fetch_guild_id(interaction)
             assert colour_guild_id is not None
-            paginator_cls.colour = await self.fetch_colour_by_id(
-                colour_guild_id, None
-            )
+            paginator_cls.colour = await self.fetch_colour_by_id(colour_guild_id, None)
             paginator_cls.op = op
             paginator_cls.client = self
 
@@ -3444,9 +3449,7 @@ class PollsCog(commands.Cog, name="Polls"):
             assert colour_guild_id is not None
             embed = discord.Embed(
                 title=f"{user.name}'s Polls",
-                colour=await self.fetch_colour_by_id(
-                    colour_guild_id, None
-                ),
+                colour=await self.fetch_colour_by_id(colour_guild_id, None),
                 timestamp=discord.utils.utcnow(),
             )
 
