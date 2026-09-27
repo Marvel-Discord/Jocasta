@@ -6,13 +6,16 @@ import re
 import traceback
 
 from contextlib import asynccontextmanager
-from discord import *
-from discord.app_commands import *
+
+import discord
+from discord import Attachment, Forbidden, Interaction, NotFound, app_commands
+from discord.app_commands import AppCommandError, Choice
 from discord.app_commands.tree import _log
+from discord.ext import commands
 
 from cogs.time import TimeCog
-from config import *
-from funcs.buttonpaginator import *
+from config import database_listener_logs, global_slashies, guild_ids, polls_api_base_url, polls_api_token
+from funcs.buttonpaginator import BaseButtonPaginator
 from funcs.polls_api import PollsAPIError
 from funcs.poll_ws import PollWebSocketClient, ws_url_from_base
 
