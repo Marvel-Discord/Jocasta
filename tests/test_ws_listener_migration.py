@@ -227,10 +227,12 @@ async def test_stop_ws_listener_cancels_task_and_stops_client():
     cog.poll_ws_client.stop.assert_awaited_once()
 
 
-def test_cog_unload_schedules_stop():
+async def test_cog_unload_schedules_stop():
     cog = make_cog()
     cog._stop_ws_listener = AsyncMock()
+    calls_before = cog.bot.loop.create_task.call_count
 
-    cog.cog_unload()
+    await cog.cog_unload()
 
+    assert cog.bot.loop.create_task.call_count == calls_before + 1
     cog._stop_ws_listener.assert_not_awaited()  # scheduled, not awaited inline
