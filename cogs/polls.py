@@ -1809,19 +1809,19 @@ class PollsCog(commands.Cog, name="Polls"):
             traceback.print_tb(error.__traceback__)
 
     class EditView(discord.ui.View):
-        def __init__(self, *, items, modal, groups, title):
+        def __init__(self, *, items, modal: "type[PollsCog.EditModal]", groups, title):
             super().__init__(timeout=None)
-            self.items = items
+            self.items: "dict[str, PollsCog.EditItem]" = items
             self.modal = modal
             self.msg = None
-            self.groups = groups
-            self.title = title
+            self.groups: "dict[str, list[str]]" = groups
+            self.title: str = title
 
-            self.interaction = None
-            self.status = False
+            self.interaction: "discord.Interaction | None" = None
+            self.status: bool = False
 
-            self.checks = []
-            self.incomplete = {}
+            self.checks: "list[list]" = []
+            self.incomplete: "dict[str, discord.ui.Button]" = {}
 
             self.add_check(
                 lambda x: not any(i.required and not i.value for i in x.values()),
@@ -1850,6 +1850,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 self.select = select
 
             async def callback(self, interaction: discord.Interaction):
+                assert self.view is not None
                 modal = self.view.modal(
                     title=self.view.title,
                     texts={i: self.view.items[i].text_input() for i in self.select},
@@ -1868,6 +1869,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 self.value = confirm
 
             async def callback(self, interaction: discord.Interaction):
+                assert self.view is not None
                 self.view.status = self.value
                 self.view.interaction = interaction
                 self.view.stop()
@@ -1894,14 +1896,18 @@ class PollsCog(commands.Cog, name="Polls"):
                     self.incomplete[error] = next(
                         i
                         for i in self.add_item(self.IncompleteButton(error)).children
-                        if i.label == error
+                        if isinstance(i, discord.ui.Button) and i.label == error
                     )
                 elif not incomplete and error in self.incomplete:
                     self.remove_item(self.incomplete[error])
                     self.incomplete.pop(error)
 
             # for child in [c for c in self.children if c.custom_id.split('-')[0] == 'c']:
-            for child in [c for c in self.children if c.custom_id == "c-True"]:
+            for child in [
+                c
+                for c in self.children
+                if isinstance(c, discord.ui.Button) and c.custom_id == "c-True"
+            ]:
                 child.disabled = not complete
 
         def add_check(self, check, error):
@@ -2198,7 +2204,8 @@ class PollsCog(commands.Cog, name="Polls"):
         await view.wait()
 
         for child in view.children:
-            child.disabled = True
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
 
         if view.value is None:
             await msg.edit(content="Timed out.", view=view)
@@ -3027,8 +3034,8 @@ class PollsCog(commands.Cog, name="Polls"):
             msg = await interaction.followup.send("Searching...")
 
             class PollSearchPaginator(BaseButtonPaginator):
-                text = None
-                colour = None
+                text: list[str]
+                colour: int | None
 
                 async def format_page(self, entries):
                     def entry_format(poll):
@@ -3068,7 +3075,8 @@ class PollsCog(commands.Cog, name="Polls"):
             await paginator.wait()
 
             for child in paginator.children:
-                child.disabled = True
+                if isinstance(child, discord.ui.Button):
+                    child.disabled = True
             paginator.stop()
 
             return await paginator.msg.edit(content="Timed out.", view=paginator)
@@ -3160,6 +3168,11 @@ class PollsCog(commands.Cog, name="Polls"):
                     return await msg.edit(embed=embed)
 
                 class PollsMePaginator(BaseButtonPaginator):
+                    client: "PollsCog"
+                    user: discord.User
+                    op: bool
+                    colour: int | None
+
                     async def format_page(self, entries):
                         embed = discord.Embed(
                             title=f"{self.user.name}'s Polls",
@@ -3211,6 +3224,11 @@ class PollsCog(commands.Cog, name="Polls"):
                     return await msg.edit(embed=embed)
 
                 class PollsMePaginator(BaseButtonPaginator):
+                    client: "PollsCog"
+                    user: discord.User
+                    op: bool
+                    colour: int | None
+
                     async def format_page(self, entries):
                         embed = discord.Embed(
                             title=f"{self.user.name}'s Polls",
@@ -3219,6 +3237,7 @@ class PollsCog(commands.Cog, name="Polls"):
                         )
                         for p in entries:
                             tag = await self.client.fetch_tag(p["tag"])
+                            assert tag is not None
                             if interaction.guild_id == p["guild_id"]:
                                 message = await self.client.fetchpollmsg(p)
                             else:
