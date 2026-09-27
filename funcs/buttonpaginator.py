@@ -31,7 +31,7 @@ class BaseButtonPaginator(Generic[T], discord.ui.View):
         Whether or not to clamp the pages to the min and max. 
     """
     if TYPE_CHECKING:
-        ctx: commands.Context[commands.Bot]
+        ctx: discord.WebhookMessage
     
     def __init__(self, *, entries: List[T], per_page: int = 6, clamp_pages: bool = True) -> None:
         super().__init__(timeout=180)
@@ -42,7 +42,7 @@ class BaseButtonPaginator(Generic[T], discord.ui.View):
         self._current_page = 0
         self.pages = [entries[i: i+per_page] for i in range(0, len(entries), per_page)]
 
-        self.msg = None
+        self.msg: discord.Message | None = None
         
     @property
     def max_page(self) -> int:
@@ -119,7 +119,7 @@ class BaseButtonPaginator(Generic[T], discord.ui.View):
     @classmethod
     async def start(
         cls: Type[BaseButtonPaginator],
-        context: commands.Context,
+        context: discord.WebhookMessage,
         *, 
         entries: List[T],
         per_page: int = 6,
