@@ -20,8 +20,8 @@ def make_cog():
 
     cog = PollsCog(FakeBot())
     cog.guild_ids = [100]
-    unwrap_command(cog, "pollsme")
-    unwrap_command(cog, "polladminsync")
+    unwrap_command(cog, "polls_me")
+    unwrap_command(cog, "poll_admin_sync")
     unwrap_command(cog, "poll_schedule")
     unwrap_command(cog, "poll_start")
     unwrap_command(cog, "poll_end")
@@ -121,12 +121,12 @@ async def test_handle_poll_event_published_poll_rerenders_and_reschedules():
     cog = make_cog()
     poll_dict = cog.poll_dict(make_poll_model(published=True))
     cog.fetch_poll = AsyncMock(return_value=poll_dict)
-    cog.updatepollmessage = AsyncMock()
+    cog.update_poll_message = AsyncMock()
     cog.update_poll_scheduling = AsyncMock()
 
     await cog.handle_poll_event(42)
 
-    cog.updatepollmessage.assert_awaited_once_with(poll_dict)
+    cog.update_poll_message.assert_awaited_once_with(poll_dict)
     cog.update_poll_scheduling.assert_awaited_once_with(poll_dict)
 
 
@@ -134,24 +134,24 @@ async def test_handle_poll_event_unpublished_poll_only_reschedules():
     cog = make_cog()
     poll_dict = cog.poll_dict(make_poll_model(published=False))
     cog.fetch_poll = AsyncMock(return_value=poll_dict)
-    cog.updatepollmessage = AsyncMock()
+    cog.update_poll_message = AsyncMock()
     cog.update_poll_scheduling = AsyncMock()
 
     await cog.handle_poll_event(42)
 
-    cog.updatepollmessage.assert_not_awaited()
+    cog.update_poll_message.assert_not_awaited()
     cog.update_poll_scheduling.assert_awaited_once_with(poll_dict)
 
 
 async def test_handle_poll_event_skips_foreign_guild():
     cog = make_cog()
     cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(make_poll_model(guild_id=999)))
-    cog.updatepollmessage = AsyncMock()
+    cog.update_poll_message = AsyncMock()
     cog.update_poll_scheduling = AsyncMock()
 
     await cog.handle_poll_event(42)
 
-    cog.updatepollmessage.assert_not_awaited()
+    cog.update_poll_message.assert_not_awaited()
     cog.update_poll_scheduling.assert_not_awaited()
 
 

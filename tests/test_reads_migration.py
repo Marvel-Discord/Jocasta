@@ -21,8 +21,8 @@ def make_cog():
 
     cog = PollsCog(FakeBot())
     cog.guild_ids = [288896937074360321]
-    unwrap_command(cog, "pollsme")
-    unwrap_command(cog, "polladminsync")
+    unwrap_command(cog, "polls_me")
+    unwrap_command(cog, "poll_admin_sync")
     return cog
 
 
@@ -272,7 +272,7 @@ async def test_on_startup_self_assign_filters_roles_client_side():
     cog.bot.add_view.assert_called_once()
 
 
-async def test_pollsme_votes_and_polls_come_from_api():
+async def test_polls_me_votes_and_polls_come_from_api():
     cog = make_cog()
     cog.bot.polls_api.get_user_votes = AsyncMock(
         return_value=[UserVote(id=1, user_id=1234, poll_id=42, choice=1)]
@@ -280,10 +280,10 @@ async def test_pollsme_votes_and_polls_come_from_api():
     cog.bot.polls_api.sync_all_polls = AsyncMock(
         return_value=[make_poll_model(id=42)]
     )
-    cog.fetchguildid = AsyncMock(return_value=100)
-    cog.canview = AsyncMock(return_value=False)
-    cog.fetchcolourbyid = AsyncMock(return_value=1)
-    cog.sortpolls = lambda polls, sort=PollsCog.Sort.newest: polls
+    cog.fetch_guild_id = AsyncMock(return_value=100)
+    cog.can_view = AsyncMock(return_value=False)
+    cog.fetch_colour_by_id = AsyncMock(return_value=1)
+    cog.sort_polls = lambda polls, sort=PollsCog.Sort.newest: polls
 
     interaction = MagicMock()
     interaction.guild_id = 100
@@ -295,7 +295,7 @@ async def test_pollsme_votes_and_polls_come_from_api():
     msg.edit = AsyncMock()
     interaction.followup.send.return_value = msg
 
-    await cog.pollsme(interaction)
+    await cog.polls_me(interaction)
     cog.bot.polls_api.sync_all_polls.assert_awaited_once()
     assert cog.bot.polls_api.sync_all_polls.await_args.args[0] == 100
     kwargs = cog.bot.polls_api.sync_all_polls.await_args.kwargs
@@ -315,36 +315,36 @@ def make_interaction():
     return interaction
 
 
-async def test_pollsme_show_unvoted_composes_tag_and_guild_keys():
+async def test_polls_me_show_unvoted_composes_tag_and_guild_keys():
     cog = make_cog()
     cog.bot.polls_api.get_user_votes = AsyncMock(return_value=[])
     cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[make_poll_model()])
     cog.bot.polls_api.get_guild = AsyncMock(return_value=GuildSettings(**make_guild_dict()))
     cog.bot.polls_api.get_tags = AsyncMock(return_value=[Tag(**make_tag_dict())])
-    cog.fetchguildid = AsyncMock(return_value=100)
-    cog.fetchcolourbyid = AsyncMock(return_value=1)
-    cog.sortpolls = lambda polls, sort=PollsCog.Sort.newest: polls
+    cog.fetch_guild_id = AsyncMock(return_value=100)
+    cog.fetch_colour_by_id = AsyncMock(return_value=1)
+    cog.sort_polls = lambda polls, sort=PollsCog.Sort.newest: polls
     seen = []
-    cog.canview = AsyncMock(side_effect=lambda poll, guild_id: seen.append(poll) or False)
+    cog.can_view = AsyncMock(side_effect=lambda poll, guild_id: seen.append(poll) or False)
 
-    await cog.pollsme(make_interaction(), show_unvoted=True)
+    await cog.polls_me(make_interaction(), show_unvoted=True)
 
     cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(100, live=True)
     assert seen[0]["channel_id"] == 200
     assert seen[0]["fallback_channel_id"] == 303
 
 
-async def test_pollsme_no_votes_makes_no_wasted_fetches():
+async def test_polls_me_no_votes_makes_no_wasted_fetches():
     cog = make_cog()
     cog.bot.polls_api.get_user_votes = AsyncMock(return_value=[])
     cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[])
-    cog.fetchguildid = AsyncMock(return_value=100)
-    cog.fetchcolourbyid = AsyncMock(return_value=1)
+    cog.fetch_guild_id = AsyncMock(return_value=100)
+    cog.fetch_colour_by_id = AsyncMock(return_value=1)
 
-    await cog.pollsme(make_interaction())
+    await cog.polls_me(make_interaction())
 
     cog.bot.polls_api.sync_all_polls.assert_not_awaited()
-    assert cog.fetchguildid.await_count == 1
+    assert cog.fetch_guild_id.await_count == 1
 
 
 async def test_admin_sync_skips_update_votes_task():
@@ -361,7 +361,7 @@ async def test_admin_sync_skips_update_votes_task():
     msg.edit = AsyncMock()
     interaction.followup.send = AsyncMock(return_value=msg)
 
-    await cog.polladminsync(interaction)
+    await cog.poll_admin_sync(interaction)
     cog.fetch_all_polls.assert_awaited_once_with(show_unpublished=False)
     cog.schedule_starts.assert_awaited_once()
     cog.schedule_ends.assert_awaited_once()
