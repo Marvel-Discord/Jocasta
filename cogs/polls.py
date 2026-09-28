@@ -1316,19 +1316,13 @@ class PollsCog(commands.Cog, name="Polls"):
                                 latest.remove(message_id)
                                 break
                     if change:
-                        async with self.acquire_bot_conn() as conn:
-                            await conn.execute(
-                                "UPDATE pollstags SET end_message_latest_ids = $2 WHERE tag = $1",
-                                t["tag"],
-                                latest,
-                            )
+                        await self.bot.polls_api.set_tag_end_message_latest_ids(
+                            t["tag"], latest
+                        )
 
-            async with self.acquire_bot_conn() as conn:
-                await conn.execute(
-                    "UPDATE pollstags SET end_message_latest_ids = $2 WHERE tag = $1",
-                    tag["tag"],
-                    [m.id for m in endmsgs],
-                )
+            await self.bot.polls_api.set_tag_end_message_latest_ids(
+                tag["tag"], [m.id for m in endmsgs]
+            )
 
         for poll, t in polls:
             poll = await self.fetch_poll(poll["id"])
@@ -1433,8 +1427,10 @@ class PollsCog(commands.Cog, name="Polls"):
         )
 
     async def schedule_starts(self, *, tag=0, timestamps=[], natural=False):
-        polls = await self.bot.polls_api.sync_all_polls(self.polls_guild_id(), has_start="true")
-        polls = [self.poll_dict(p) for p in polls if not p.published]
+        polls = await self.bot.polls_api.sync_all_polls(
+            self.polls_guild_id(), has_start="true", published="false"
+        )
+        polls = [self.poll_dict(p) for p in polls]
 
         for k, v in self.bot.tasks["poll_schedules"]["starts"].items():
             if (
@@ -2106,7 +2102,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         poll = {
             "question": question,
-            "guild_id": interaction.guild_id,
+            "guild_id": str(interaction.guild_id),
             "choices": choices,
             "tag": tag,
             "image": image,

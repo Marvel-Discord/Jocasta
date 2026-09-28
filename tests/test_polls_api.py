@@ -440,6 +440,62 @@ async def test_sync_all_polls_stops_on_empty_page():
     assert await client.sync_all_polls(100) == []
 
 
+async def test_set_tag_end_message_latest_ids_posts_and_returns_tag():
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx2.Response(200, json=tag_payload(tag=3, end_message_latest_ids=[7, 8]))
+
+    client = make_client(handler)
+    result = await client.set_tag_end_message_latest_ids(3, [7, 8])
+    assert seen["path"] == "/bot/tags/3/end-message-latest-ids"
+    assert seen["body"] == {"end_message_latest_ids": ["7", "8"]}
+    assert result["tag"] == 3
+
+
+async def test_set_tag_end_message_latest_ids_sends_snowflake_ids_as_strings():
+    seen = {}
+
+    async def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx2.Response(200, json=tag_payload(tag=3))
+
+    client = make_client(handler)
+    await client.set_tag_end_message_latest_ids(3, [1297652123456789012, 1297652123456789013])
+    assert seen["body"]["end_message_latest_ids"] == ["1297652123456789012", "1297652123456789013"]
+    assert all(isinstance(i, str) for i in seen["body"]["end_message_latest_ids"])
+
+
+async def test_publish_poll_sends_snowflake_ids_as_strings():
+    seen = {}
+
+    async def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx2.Response(200, json=poll_payload(id=1))
+
+    client = make_client(handler)
+    await client.publish_poll(1, 1297652123456789012, [1297652123456789013, 1297652123456789014])
+    assert seen["body"]["message_id"] == "1297652123456789012"
+    assert isinstance(seen["body"]["message_id"], str)
+    assert seen["body"]["crosspost_message_ids"] == ["1297652123456789013", "1297652123456789014"]
+    assert all(isinstance(i, str) for i in seen["body"]["crosspost_message_ids"])
+
+
+async def test_crosspost_poll_sends_snowflake_id_as_string():
+    seen = {}
+
+    async def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx2.Response(200, json=poll_payload(id=1))
+
+    client = make_client(handler)
+    await client.crosspost_poll(1, 1297652123456789012)
+    assert seen["body"]["message_id"] == "1297652123456789012"
+    assert isinstance(seen["body"]["message_id"], str)
+
+
 async def test_sync_all_polls_translates_positional_guild_id_to_guildid_param():
     seen = []
 
