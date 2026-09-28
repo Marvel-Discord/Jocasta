@@ -10,6 +10,7 @@ from funcs.polls_api_models import (
     Poll,
     PollListResponse,
     Tag,
+    UserVote,
     VoteCounts,
 )
 
@@ -29,6 +30,7 @@ class Op(StrEnum):
     GET_GUILD = auto()
     GET_GUILD_CHANNELS = auto()
     GET_GUILD_ROLES = auto()
+    GET_USER_VOTES = auto()
     HEALTH = auto()
     CAST_VOTE = auto()
     CREATE_POLLS = auto()
@@ -42,14 +44,14 @@ class Op(StrEnum):
 
 RETRY_SAFE = frozenset({
     Op.GET_POLL, Op.LIST_POLLS, Op.SYNC_POLLS, Op.GET_TAGS, Op.GET_TAG,
-    Op.GET_GUILD, Op.GET_GUILD_CHANNELS, Op.GET_GUILD_ROLES,
+    Op.GET_GUILD, Op.GET_GUILD_CHANNELS, Op.GET_GUILD_ROLES, Op.GET_USER_VOTES,
     Op.CAST_VOTE, Op.PUBLISH_POLL, Op.END_POLL,
     Op.UPDATE_POLLS, Op.DELETE_POLLS, Op.UPDATE_BY_TAG,
 })
 
 READ_OPS = frozenset({
     Op.GET_POLL, Op.LIST_POLLS, Op.SYNC_POLLS, Op.GET_TAGS, Op.GET_TAG,
-    Op.GET_GUILD, Op.GET_GUILD_CHANNELS, Op.GET_GUILD_ROLES, Op.HEALTH,
+    Op.GET_GUILD, Op.GET_GUILD_CHANNELS, Op.GET_GUILD_ROLES, Op.GET_USER_VOTES, Op.HEALTH,
 })
 
 
@@ -121,6 +123,16 @@ class PollsAPIClient:
         response = await self._request("GET", "/bot/polls/sync", Op.SYNC_POLLS, params=params)
         return PollListResponse.model_validate(response.json())
 
+    async def sync_all_polls(self, guild_id: int, **params) -> list[Poll]:
+        polls: list[Poll] = []
+        page = 1
+        while True:
+            response = await self.sync_polls(guildId=guild_id, page=page, limit=100, **params)
+            polls.extend(response.data)
+            if not response.data or len(polls) >= response.meta.get("total", 0):
+                return polls
+            page += 1
+
     async def get_tags(self, **params) -> list[Tag]:
         response = await self._request("GET", "/bot/tags", Op.GET_TAGS, params=params)
         return [Tag.model_validate(item) for item in response.json()]
@@ -140,6 +152,10 @@ class PollsAPIClient:
     async def get_guild_roles(self, guild_id: int) -> list[dict]:
         response = await self._request("GET", f"/bot/discord/guilds/{guild_id}/roles", Op.GET_GUILD_ROLES)
         return response.json()
+
+    async def get_user_votes(self, user_id: int) -> list[UserVote]:
+        response = await self._request("GET", f"/bot/polls/votes/{user_id}", Op.GET_USER_VOTES)
+        return [UserVote.model_validate(vote) for vote in response.json()]
 
     async def health(self) -> bool:
         try:
