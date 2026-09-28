@@ -5,6 +5,12 @@ import pytest
 import fakeredis.aioredis
 
 
+def unwrap_command(cog, name):
+    """Bind an app_commands.Command's callback so tests can call it directly."""
+    command = getattr(cog, name)
+    setattr(cog, name, command._callback.__get__(cog))
+
+
 @pytest.fixture
 def fake_redis():
     """A fresh in-memory Redis instance for each test."""

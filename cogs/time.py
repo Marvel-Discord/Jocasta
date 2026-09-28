@@ -164,7 +164,8 @@ class TimeCog(discord.ext.commands.Cog, name = "Time"):
 		else:
 			await interaction.followup.send('\n'.join(str(int(i.timestamp())) for i in timestamps))
 
-	def strtodatetime(self, time: str):
+	@staticmethod
+	def strtodatetime(time: str):
 		time = time.strip()
 
 		if time.isdigit():

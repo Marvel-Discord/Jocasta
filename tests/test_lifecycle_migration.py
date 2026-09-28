@@ -4,10 +4,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 from cogs.polls import PollsCog
 from funcs.polls_api_models import GuildSettings, Poll, Tag, UserVote
+from tests.conftest import unwrap_command
 
 
 def make_cog():
     class FakeBot:
+        get_channel: MagicMock
+        get_guild: MagicMock
+        updatemsg_lock: MagicMock
+        user: MagicMock
+
         def __init__(self):
             self.tasks = {"poll_schedules": {"starts": {}, "ends": {}}}
             self.tree = MagicMock()
@@ -18,11 +24,11 @@ def make_cog():
 
     cog = PollsCog(FakeBot())
     cog.guild_ids = [288896937074360321]
-    cog.pollsme = PollsCog.pollsme._callback.__get__(cog)
-    cog.polladminsync = PollsCog.polladminsync._callback.__get__(cog)
-    cog.poll_schedule = PollsCog.poll_schedule._callback.__get__(cog)
-    cog.poll_start = PollsCog.poll_start._callback.__get__(cog)
-    cog.poll_end = PollsCog.poll_end._callback.__get__(cog)
+    unwrap_command(cog, "pollsme")
+    unwrap_command(cog, "polladminsync")
+    unwrap_command(cog, "poll_schedule")
+    unwrap_command(cog, "poll_start")
+    unwrap_command(cog, "poll_end")
     return cog
 
 
@@ -252,6 +258,7 @@ async def test_start_polls_publishes_after_sending_with_collected_ids():
     cog.bot.polls_api.publish_poll.assert_awaited_once_with(42, 7001, [7002])
     main_channel.send.assert_awaited_once()
     crosspost_channel.send.assert_awaited_once()
+    assert final is not None
     assert len(final) == 2
     assert final[0][0]["id"] == 42 and final[1][0]["id"] == 42
 
@@ -351,6 +358,7 @@ async def test_start_polls_no_crossposts_publishes_empty_array():
     final = await cog.start_polls([42])
 
     cog.bot.polls_api.publish_poll.assert_awaited_once_with(42, 7001, [])
+    assert final is not None
     assert len(final) == 1
 
 
@@ -442,7 +450,9 @@ async def test_poll_schedule_duration_without_start_time_is_rejected():
     await cog.poll_schedule(interaction, 42, duration=3600)
 
     cog.bot.polls_api.update_polls.assert_not_awaited()
-    assert "without a start time" in interaction.followup.send.await_args.args[0]
+    followup_args = interaction.followup.send.await_args
+    assert followup_args is not None
+    assert "without a start time" in followup_args.args[0]
 
 
 async def test_end_poll_natural_uses_lifecycle_endpoint():

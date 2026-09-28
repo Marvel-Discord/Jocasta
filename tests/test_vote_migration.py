@@ -77,7 +77,9 @@ async def test_vote_updates_poll_from_vote_counts_and_rerenders():
     result = await cog.cast_vote(make_poll(), make_user(1234), 0)
 
     cog.updatepollmessage.assert_awaited_once()
-    rendered = cog.updatepollmessage.await_args.args[0]
+    await_args = cog.updatepollmessage.await_args
+    assert await_args is not None
+    rendered = await_args.args[0]
     assert rendered["votes"] == [1, 2, 0]
     assert rendered["total_votes"] == 3
     assert result == 0

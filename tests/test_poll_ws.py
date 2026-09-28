@@ -228,7 +228,9 @@ async def test_stop_cancels_debounce_loop_and_exits_start(monkeypatch):
         assert client._running is False
         await asyncio.wait_for(task, timeout=2.0)
         await asyncio.sleep(0.05)
-        assert client._debounce_task.cancelled()
+        debounce_task = client._debounce_task
+        assert debounce_task is not None
+        assert debounce_task.cancelled()
     finally:
         await client.stop()
         try:
@@ -255,7 +257,7 @@ async def test_debounce_loop_survives_handler_exception(monkeypatch):
 
     calls = []
 
-    async def flaky_first(poll_id):
+    async def flaky_first(poll_id) -> None:
         calls.append(("boom", poll_id))
         raise RuntimeError("handler exploded")
 

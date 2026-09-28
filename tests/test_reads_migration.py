@@ -4,10 +4,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 from cogs.polls import PollsCog
 from funcs.polls_api_models import GuildSettings, Poll, Tag, UserVote
+from tests.conftest import unwrap_command
 
 
 def make_cog():
     class FakeBot:
+        guilds: list
+        add_view: MagicMock
+
         def __init__(self):
             self.tasks = {}
             self.tree = MagicMock()
@@ -17,8 +21,8 @@ def make_cog():
 
     cog = PollsCog(FakeBot())
     cog.guild_ids = [288896937074360321]
-    cog.pollsme = PollsCog.pollsme._callback.__get__(cog)
-    cog.polladminsync = PollsCog.polladminsync._callback.__get__(cog)
+    unwrap_command(cog, "pollsme")
+    unwrap_command(cog, "polladminsync")
     return cog
 
 
@@ -171,6 +175,7 @@ async def test_fetch_poll_composes_poll_tag_guild():
     cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
     cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
     poll = await cog.fetch_poll(42)
+    assert poll is not None
     assert poll["id"] == 42
     assert poll["name"] == "comics"
     assert poll["default_channel_id"] == 300
@@ -180,7 +185,9 @@ async def test_fetch_poll_composes_poll_tag_guild():
 async def test_fetch_guild_info_returns_dict_or_none_on_404():
     cog = make_cog()
     cog.bot.polls_api.get_guild = AsyncMock(return_value=GuildSettings(**make_guild_dict()))
-    assert (await cog.fetch_guild_info(100))["default_channel_id"] == 300
+    guild = await cog.fetch_guild_info(100)
+    assert guild is not None
+    assert guild["default_channel_id"] == 300
     cog.bot.polls_api.get_guild = AsyncMock(side_effect=PollsAPIError(404, "nope"))
     assert await cog.fetch_guild_info(100) is None
 
@@ -188,14 +195,18 @@ async def test_fetch_guild_info_returns_dict_or_none_on_404():
 async def test_fetch_guild_info_by_manage_channel_checks_home_guild_array():
     cog = make_cog()
     cog.bot.polls_api.get_guild = AsyncMock(return_value=GuildSettings(**make_guild_dict()))
-    assert (await cog.fetch_guild_info_by_manage_channel(301))["guild_id"] == 100
+    guild = await cog.fetch_guild_info_by_manage_channel(301)
+    assert guild is not None
+    assert guild["guild_id"] == 100
     assert await cog.fetch_guild_info_by_manage_channel(999) is None
 
 
 async def test_fetch_tag_returns_dict_none_on_falsy_and_404():
     cog = make_cog()
     cog.bot.polls_api.get_tag = AsyncMock(return_value=Tag(**make_tag_dict()))
-    assert (await cog.fetch_tag(1))["name"] == "comics"
+    tag = await cog.fetch_tag(1)
+    assert tag is not None
+    assert tag["name"] == "comics"
     cog.bot.polls_api.get_tag = AsyncMock(side_effect=PollsAPIError(404, "nope"))
     assert await cog.fetch_tag(1) is None
     cog.bot.polls_api.get_tag = AsyncMock(return_value=Tag(**make_tag_dict()))
@@ -272,7 +283,7 @@ async def test_pollsme_votes_and_polls_come_from_api():
     cog.fetchguildid = AsyncMock(return_value=100)
     cog.canview = AsyncMock(return_value=False)
     cog.fetchcolourbyid = AsyncMock(return_value=1)
-    cog.sortpolls = lambda polls, sort: polls
+    cog.sortpolls = lambda polls, sort=PollsCog.Sort.newest: polls
 
     interaction = MagicMock()
     interaction.guild_id = 100
@@ -312,7 +323,7 @@ async def test_pollsme_show_unvoted_composes_tag_and_guild_keys():
     cog.bot.polls_api.get_tags = AsyncMock(return_value=[Tag(**make_tag_dict())])
     cog.fetchguildid = AsyncMock(return_value=100)
     cog.fetchcolourbyid = AsyncMock(return_value=1)
-    cog.sortpolls = lambda polls, sort: polls
+    cog.sortpolls = lambda polls, sort=PollsCog.Sort.newest: polls
     seen = []
     cog.canview = AsyncMock(side_effect=lambda poll, guild_id: seen.append(poll) or False)
 

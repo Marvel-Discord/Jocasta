@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from cogs.polls import PollsCog
 from funcs.polls_api import PollsAPIError
 from funcs.polls_api_models import GuildSettings, Poll, Tag, UserVote
+from tests.conftest import unwrap_command
 
 
 def make_cog():
@@ -19,15 +20,15 @@ def make_cog():
 
     cog = PollsCog(FakeBot())
     cog.guild_ids = [288896937074360321]
-    cog.pollsme = PollsCog.pollsme._callback.__get__(cog)
-    cog.polladminsync = PollsCog.polladminsync._callback.__get__(cog)
-    cog.poll_schedule = PollsCog.poll_schedule._callback.__get__(cog)
-    cog.poll_start = PollsCog.poll_start._callback.__get__(cog)
-    cog.poll_end = PollsCog.poll_end._callback.__get__(cog)
-    cog.poll_delete = PollsCog.poll_delete._callback.__get__(cog)
-    cog.poll_edit = PollsCog.poll_edit._callback.__get__(cog)
-    cog.poll_create = PollsCog.poll_create._callback.__get__(cog)
-    cog.poll_bulk_edit = PollsCog.poll_bulk_edit._callback.__get__(cog)
+    unwrap_command(cog, "pollsme")
+    unwrap_command(cog, "polladminsync")
+    unwrap_command(cog, "poll_schedule")
+    unwrap_command(cog, "poll_start")
+    unwrap_command(cog, "poll_end")
+    unwrap_command(cog, "poll_delete")
+    unwrap_command(cog, "poll_edit")
+    unwrap_command(cog, "poll_create")
+    unwrap_command(cog, "poll_bulk_edit")
     return cog
 
 
@@ -120,8 +121,9 @@ async def test_poll_delete_confirmed_calls_delete_polls_with_user():
     msg.edit = AsyncMock()
     interaction.followup.send = AsyncMock(return_value=msg)
 
-    async def instant_confirm_wait(self):
+    async def instant_confirm_wait(self) -> bool:
         self.value = True
+        return True
 
     original_wait = PollsCog.Confirm.wait
     PollsCog.Confirm.wait = instant_confirm_wait
@@ -150,8 +152,9 @@ async def test_poll_delete_api_error_sends_ephemeral_reply():
     msg.edit = AsyncMock()
     interaction.followup.send = AsyncMock(return_value=msg)
 
-    async def instant_confirm_wait(self):
+    async def instant_confirm_wait(self) -> bool:
         self.value = True
+        return True
 
     original_wait = PollsCog.Confirm.wait
     PollsCog.Confirm.wait = instant_confirm_wait
@@ -285,7 +288,9 @@ async def test_poll_create_without_tag_is_rejected():
     await cog.poll_create(interaction, question="Q?", opt_1="A", opt_2="B")
 
     cog.bot.polls_api.create_polls.assert_not_awaited()
-    assert "tag" in interaction.followup.send.await_args.args[0]
+    followup_args = interaction.followup.send.await_args
+    assert followup_args is not None
+    assert "tag" in followup_args.args[0]
 
 
 async def test_poll_create_api_error_sends_ephemeral_reply():
@@ -329,5 +334,7 @@ async def test_poll_bulk_edit_updates_by_tag_and_lists_response():
     assert args[1] == {"show_voting": False}
     assert args[2] == 1234
     cog.updatepollmessage.assert_awaited_once()
-    sent = interaction.followup.send.await_args.args[0]
+    followup_args = interaction.followup.send.await_args
+    assert followup_args is not None
+    sent = followup_args.args[0]
     assert "`42`" in sent and "`show_voting = False`" in sent
