@@ -5,7 +5,7 @@ import time
 import websockets
 
 import funcs.poll_ws as poll_ws
-from funcs.poll_ws import PollWebSocketClient
+from funcs.poll_ws import PollWebSocketClient, ws_url_from_base
 
 HELLO = json.dumps({"type": "connected"})
 
@@ -37,6 +37,21 @@ class FakeWS:
         if not self._messages:
             raise ConnectionError("connection closed by server")
         return self._messages.pop(0)
+
+
+class HeldOpenWS(FakeWS):
+    """FakeWS that blocks (instead of raising) once its messages are drained,
+    so the test controls when the connection ends."""
+
+    def __init__(self, messages):
+        super().__init__(messages)
+        self.release = asyncio.Event()
+
+    async def __anext__(self):
+        if self._messages:
+            return self._messages.pop(0)
+        await self.release.wait()
+        raise ConnectionError("connection closed by server")
 
 
 def make_connect(script):
@@ -130,6 +145,56 @@ async def test_disconnect_then_reconnect_resyncs_again(monkeypatch):
         assert len(calls) >= 4
 
 
+async def test_resync_failure_grows_backoff_and_success_resets_it(monkeypatch):
+    client, updates, resyncs, calls = make_ws_client(
+        monkeypatch, [FakeWS([HELLO]), FakeWS([HELLO]), OSError("down")]
+    )
+    monkeypatch.setattr(poll_ws, "RECONNECT_BACKOFF_INITIAL", 0.08)
+    monkeypatch.setattr(poll_ws, "RECONNECT_BACKOFF_MAX", 0.4)
+
+    real_sleep = asyncio.sleep
+    sleeps = []
+
+    async def recording_sleep(delay):
+        sleeps.append(delay)
+        await real_sleep(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", recording_sleep)
+
+    resync_calls = []
+
+    async def flaky_resync():
+        resync_calls.append(True)
+        if len(resync_calls) == 1:
+            raise RuntimeError("api down during resync")
+
+    client.on_full_resync = flaky_resync
+
+    async for task in run_and_stop(client):
+        await wait_until(lambda: len(calls) >= 3, timeout=5.0)
+
+    reconnect_sleeps = [d for d in sleeps if d >= 0.05]
+    # sleep 1: resync failed on a healthy connection -> initial backoff
+    # sleep 2: resync succeeded then WS closed -> backoff was reset, not grown
+    # sleep 3: plain connect failure -> grown from the reset value
+    assert reconnect_sleeps[:3] == [0.08, 0.08, 0.16]
+
+
+async def test_malformed_frame_is_discarded_and_connection_survives(monkeypatch):
+    ws = HeldOpenWS([HELLO, "not json{{", '{"table": "polls"}', frame(42)])
+    client, updates, resyncs, calls = make_ws_client(
+        monkeypatch, [ws, OSError("down")]
+    )
+    task = asyncio.create_task(client.start("ws://test", "test-token"))
+    try:
+        await wait_until(lambda: updates == [42])
+        assert len(calls) == 1
+    finally:
+        ws.release.set()
+        await client.stop()
+        await asyncio.wait_for(task, timeout=2.0)
+
+
 async def test_stop_cancels_debounce_loop_and_exits_start(monkeypatch):
     client, updates, resyncs, calls = make_ws_client(
         monkeypatch, [FakeWS([HELLO]), OSError("down")]
@@ -148,3 +213,48 @@ async def test_stop_cancels_debounce_loop_and_exits_start(monkeypatch):
             await asyncio.wait_for(task, timeout=2.0)
         except asyncio.TimeoutError:
             task.cancel()
+
+
+def test_ws_url_from_base_http():
+    assert ws_url_from_base("http://localhost:8000/api/v1") == "ws://localhost:8000/api/v1/bot/events"
+
+
+def test_ws_url_from_base_https():
+    assert ws_url_from_base("https://polls.example.com/api/v1") == "wss://polls.example.com/api/v1/bot/events"
+
+
+def test_ws_url_from_base_strips_trailing_slash():
+    assert ws_url_from_base("http://localhost:8000/api/v1/") == "ws://localhost:8000/api/v1/bot/events"
+
+
+async def test_debounce_loop_survives_handler_exception(monkeypatch):
+    monkeypatch.setattr(poll_ws, "DEBOUNCE_SECONDS", 0.05)
+    monkeypatch.setattr(poll_ws, "DEBOUNCE_CHECK_INTERVAL", 0.02)
+
+    calls = []
+
+    async def flaky_first(poll_id):
+        calls.append(("boom", poll_id))
+        raise RuntimeError("handler exploded")
+
+    client = PollWebSocketClient(None, flaky_first, None)
+    task = asyncio.create_task(client._debounce_loop())
+
+    client._dirty[42] = time.monotonic() - 1
+    try:
+        await wait_until(lambda: ("boom", 42) in calls)
+        assert 42 not in client._dirty
+
+        async def recovered(poll_id):
+            calls.append(("ok", poll_id))
+
+        client.on_poll_update = recovered
+        client._dirty[42] = time.monotonic() - 1
+        await wait_until(lambda: ("ok", 42) in calls)
+        assert not task.done()
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
