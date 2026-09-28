@@ -88,9 +88,18 @@ class PollsAPIClient:
             return {}
         return {"X-Discord-User-Id": str(user_id)}
 
+    @staticmethod
+    def _normalize_params(params: dict) -> dict:
+        return {
+            key: str(value).lower() if isinstance(value, bool) else value
+            for key, value in params.items()
+        }
+
     async def _request(self, method, path, op, user_id=None, **kwargs) -> httpx2.Response:
         headers = self._headers(user_id)
         kwargs.setdefault("headers", {}).update(headers)
+        if "params" in kwargs:
+            kwargs["params"] = self._normalize_params(kwargs["params"])
         timeout = READ_TIMEOUT if op in READ_OPS else WRITE_TIMEOUT
         attempts = MAX_ATTEMPTS if op in RETRY_SAFE else 1
         last_exc = None

@@ -257,7 +257,7 @@ async def test_on_startup_self_assign_filters_roles_client_side():
     )
     cog.bot.add_view = MagicMock()
     await cog.on_startup_self_assign()
-    cog.fetch_all_tags.assert_awaited_once_with(end_message_self_assign="true")
+    cog.fetch_all_tags.assert_awaited_once_with(end_message_self_assign=True)
     cog.bot.add_view.assert_called_once()
 
 
@@ -318,7 +318,7 @@ async def test_pollsme_show_unvoted_composes_tag_and_guild_keys():
 
     await cog.pollsme(make_interaction(), show_unvoted=True)
 
-    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(100, live="true")
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(100, live=True)
     assert seen[0]["channel_id"] == 200
     assert seen[0]["fallback_channel_id"] == 303
 

@@ -1217,7 +1217,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
             endmsgtags = [tag]
             if tag["end_message_replace"]:
-                alltags = await self.fetch_all_tags(end_message_replace="true")
+                alltags = await self.fetch_all_tags(end_message_replace=True)
                 channels = [tag["channel_id"]] + tag["crosspost_channels"]
                 endmsgtags += [
                     i
@@ -1357,7 +1357,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     async def schedule_starts(self, *, tag=0, timestamps=[], natural=False):
         polls = await self.bot.polls_api.sync_all_polls(
-            self.polls_guild_id(), has_start="true", published="false"
+            self.polls_guild_id(), has_start=True, published=False
         )
         polls = [self.poll_dict(p) for p in polls]
 
@@ -1389,7 +1389,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     async def schedule_ends(self, *, poll_ids: list = [], natural=False):
         polls = await self.bot.polls_api.sync_all_polls(
-            self.polls_guild_id(), has_end="true", active="true"
+            self.polls_guild_id(), has_end=True, active=True
         )
         polls = [self.poll_dict(p) for p in polls]
 
@@ -1775,7 +1775,7 @@ class PollsCog(commands.Cog, name="Polls"):
                     )
 
     async def on_startup_self_assign(self):
-        tags = await self.fetch_all_tags(end_message_self_assign="true")
+        tags = await self.fetch_all_tags(end_message_self_assign=True)
         tags = [
             t
             for t in tags
@@ -3165,7 +3165,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 guildid = await self.fetchguildid(interaction)
                 guild = await self.fetch_guild_info(guildid)
                 tags = {t["tag"]: t for t in await self.fetch_all_tags()}
-                polls = await self.bot.polls_api.sync_all_polls(guildid, live="true")
+                polls = await self.bot.polls_api.sync_all_polls(guildid, live=True)
                 polls = [self.poll_dict(p, tags.get(p.tag), guild) for p in polls]
                 polls = [poll for poll in polls if poll["published"]]
                 polls = [
