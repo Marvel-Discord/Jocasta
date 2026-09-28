@@ -15,6 +15,7 @@ from discord.app_commands.tree import _log
 from cogs.time import TimeCog
 from config import *
 from funcs.buttonpaginator import *
+from funcs.polls_api import PollsAPIError
 
 """
 x Create polls
@@ -834,7 +835,7 @@ class PollsCog(commands.Cog, name="Polls"):
             embed.add_field(name="Votes", value="Votes are hidden!")
 
         txt = []
-        vote = await self.vote(poll, user)
+        vote = await self.get_user_vote(poll, user)
         if vote is not None:
             txt.append(f"You've voted: {self.choiceformat(vote)}")
             if poll["show_options"]:
@@ -1754,10 +1755,17 @@ class PollsCog(commands.Cog, name="Polls"):
         async def vote(self, client, poll, interaction, value):
             await interaction.response.defer()
 
-            poll = await client.fetchpoll(poll["id"])
+            poll = dict(await client.fetchpoll(poll["id"]))
 
             if self.active:
-                await client.vote(poll, interaction.user, value)
+                try:
+                    await client.cast_vote(poll, interaction.user, value)
+                except PollsAPIError:
+                    await interaction.followup.send(
+                        "Something went wrong, please try again", ephemeral=True
+                    )
+                    return
+
                 qid = (
                     f"*{poll['question']}* ({poll['id']})"
                     if poll["show_question"]
@@ -1878,7 +1886,22 @@ class PollsCog(commands.Cog, name="Polls"):
             )
             self.bot.add_view(view)
 
-    async def vote(self, poll, user, choice=None):
+    async def cast_vote(self, poll: dict, user, choice: int):
+        """Cast, update, or delete a vote via the API (choice -1 = delete)."""
+        api_choice = None if choice == -1 else choice
+        counts = await self.bot.polls_api.cast_vote(
+            poll["id"], user.id, api_choice
+        )
+
+        poll["votes"] = counts.votes
+        poll["total_votes"] = counts.total_votes
+
+        await self.updatepollmessage(poll)
+
+        return choice
+
+    async def get_user_vote(self, poll: dict, user):
+        """Return the user's current vote for a poll, or None."""
         async with self.acquire_bot_conn() as conn:
             vote = await conn.fetchrow(
                 "SELECT * FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
@@ -1886,42 +1909,10 @@ class PollsCog(commands.Cog, name="Polls"):
                 poll["id"],
             )
 
-            if (
-                (poll["active"] or poll["persistent"])
-                and poll["published"]
-                and choice is not None
-            ):
-                if choice == -1:
-                    await conn.execute(
-                        "DELETE FROM pollsvotes WHERE user_id = $1 AND poll_id = $2",
-                        user.id,
-                        poll["id"],
-                    )
-                else:
-                    if not vote:
-                        await conn.execute(
-                            "INSERT INTO pollsvotes (id, user_id, poll_id, choice) VALUES ($1, $2, $3, $4)",
-                            user.id + poll["id"],
-                            user.id,
-                            poll["id"],
-                            choice,
-                        )
-                    else:
-                        await conn.execute(
-                            "UPDATE pollsvotes SET choice = $1 WHERE user_id = $2 AND poll_id = $3",
-                            choice,
-                            user.id,
-                            poll["id"],
-                        )
-
-                await self.updatepollmessage(poll)
-
-                return choice
+            if vote:
+                return vote["choice"]
             else:
-                if vote:
-                    return vote["choice"]
-                else:
-                    return None
+                return None
 
     async def add_to_thread(self, interaction, poll=None, choice=None, show_vote=False):
         thread = interaction.message.guild.get_channel_or_thread(interaction.message.id)
