@@ -438,3 +438,22 @@ async def test_sync_all_polls_stops_on_empty_page():
 
     client = make_client(handler)
     assert await client.sync_all_polls(100) == []
+
+
+async def test_sync_all_polls_translates_positional_guild_id_to_guildid_param():
+    seen = []
+
+    async def handler(request):
+        seen.append(dict(request.url.params))
+        return httpx2.Response(
+            200,
+            json={"data": [poll_payload()], "meta": {"total": 1, "page": 1, "limit": 100}},
+        )
+
+    client = make_client(handler)
+    polls = await client.sync_all_polls(100, has_start="true", active="true")
+    assert len(polls) == 1
+    assert len(seen) == 1
+    assert seen[0]["guildId"] == "100"
+    assert seen[0]["has_start"] == "true"
+    assert seen[0]["active"] == "true"
