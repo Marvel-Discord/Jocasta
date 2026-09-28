@@ -3,7 +3,6 @@ import asyncpg
 import datetime as _dt
 import enum
 import math
-import random
 import re
 import traceback
 
@@ -2139,7 +2138,7 @@ class PollsCog(commands.Cog, name="Polls"):
         show_options="Show options in poll message. Defaults to true.",
         show_voting="Show the current state of votes in poll message. Defaults to true.",
     )
-    async def pollscreate(
+    async def poll_create(
         self,
         interaction: discord.Interaction,
         question: str = None,
@@ -2182,27 +2181,15 @@ class PollsCog(commands.Cog, name="Polls"):
                 )
             tag = tag["tag"]
 
-        while True:
-            poll_id = random.randint(10000, 99999)
-            async with self.acquire_bot_conn() as conn:
-                if not conn.fetchrow("SELECT id FROM polls WHERE id = $1", poll_id):
-                    break
-
-        # id (int), num (int), time (datetime), message_id (int), question (str), thread_question (str), choices (str[]), votes (int[]), image (str), published (bool), duration (datetime), guild_id (int), description (str), tag (int), show_question (bool), show_options (bool), show_voting (bool), active (bool), crosspost_message_ids (int[])
+        if tag is None:
+            return await interaction.followup.send(
+                "Polls must have a tag. Please provide one via the `tag` parameter."
+            )
 
         poll = {
-            "id": poll_id,
             "question": question,
-            "published": False,
-            "active": False,
             "guild_id": interaction.guild_id,
             "choices": choices,
-            "votes": None,
-            "time": None,
-            "duration": None,
-            "num": None,
-            "message_id": None,
-            "crosspost_message_ids": None,
             "tag": tag,
             "image": image,
             "description": description,
@@ -2309,27 +2296,23 @@ class PollsCog(commands.Cog, name="Polls"):
                 f"Question is too long! Must be less than {self.maxqlength} characters."
             )
 
-        async with self.acquire_bot_conn() as conn:
-            await conn.execute(
-                f"""
-                    INSERT INTO polls
-                        ({", ".join(poll.keys())})
-                    VALUES
-                        ({", ".join(f"${i}" for i in range(1, len(poll) + 1))})
-                """,
-                *poll.values(),
+        try:
+            created = await self.bot.polls_api.create_polls(
+                [poll], interaction.user.id
+            )
+        except PollsAPIError:
+            return await interaction.followup.send(
+                "Something went wrong, please try again", ephemeral=True
             )
 
-        poll = await self.fetch_poll(poll_id)
+        poll = await self.fetch_poll(created[0].id)
         embed = await self.pollinfoembed(poll)
 
         txt = f"Created new poll question: \"{poll['question']}\""
-        if tag is None:
-            txt += "\n***WARNING:** This poll does not have a TAG*"
 
         await interaction.followup.send(txt, embed=embed)
 
-    @pollscreate.autocomplete("tag")
+    @poll_create.autocomplete("tag")
     async def pollscreate_autocomplete_tag(
         self, interaction: discord.Interaction, current: str
     ):
@@ -2339,7 +2322,7 @@ class PollsCog(commands.Cog, name="Polls"):
     @poll_manager_only()
     @valid_guild_only()
     @app_commands.describe(poll_id="5-digit ID of the poll to delete.")
-    async def polldelete(self, interaction: discord.Interaction, poll_id: int):
+    async def poll_delete(self, interaction: discord.Interaction, poll_id: int):
         """Deletes a poll question."""
 
         await interaction.response.defer()
@@ -2373,9 +2356,12 @@ class PollsCog(commands.Cog, name="Polls"):
         if view.value is None:
             await msg.edit(content="Timed out.", view=view)
         elif view.value:
-            async with self.acquire_bot_conn() as conn:
-                await conn.execute("DELETE FROM polls WHERE id = $1", poll_id)
-                await conn.execute("DELETE FROM pollsvotes WHERE poll_id = $1", poll_id)
+            try:
+                await self.bot.polls_api.delete_polls([poll_id], interaction.user.id)
+            except PollsAPIError:
+                return await interaction.followup.send(
+                    "Something went wrong, please try again", ephemeral=True
+                )
 
             # tags = await self.fetch_all_tags()
             # findtag = lambda x: next(i for i in tags if i['id'] == x['tag'])
@@ -2398,7 +2384,7 @@ class PollsCog(commands.Cog, name="Polls"):
         else:
             await msg.edit(content="Cancelled.", view=view)
 
-    @polldelete.autocomplete("poll_id")
+    @poll_delete.autocomplete("poll_id")
     async def polldelete_autocomplete_poll_id(
         self, interaction: discord.Interaction, current: int
     ):
@@ -2426,7 +2412,7 @@ class PollsCog(commands.Cog, name="Polls"):
         show_options="Show options in poll message.",
         show_voting="Show the current state of votes in poll message.",
     )
-    async def polledit(
+    async def poll_edit(
         self,
         interaction: discord.Interaction,
         poll_id: int,
@@ -2592,22 +2578,33 @@ class PollsCog(commands.Cog, name="Polls"):
                 if v is not None:
                     final[k] = v
 
-            txt = [
-                f"{k} = ${i}"
-                for k, i in zip(final.keys(), list(range(2, len(final) + 2)))
-            ]
+            body = {
+                "id": poll_id,
+                "question": final["question"],
+                "choices": final["choices"],
+                "description": final.get("description"),
+                "thread_question": final.get("thread_question"),
+                "image": final.get("image"),
+            }
+            for key in ("tag", "show_question", "show_options", "show_voting"):
+                if final.get(key) is not None:
+                    body[key] = final[key]
 
-            async with self.acquire_bot_conn() as conn:
-                await conn.execute(
-                    f"UPDATE polls SET {', '.join(txt)} WHERE id = $1",
-                    poll_id,
-                    *final.values(),
+            try:
+                await self.bot.polls_api.update_polls([body], interaction.user.id)
+            except PollsAPIError:
+                return await interaction.followup.send(
+                    "Something went wrong, please try again", ephemeral=True
                 )
 
         else:
             clearvalue = "-clear"
 
-            if image and image.content_type.split("/")[0] == "image":
+            if (
+                image
+                and not isinstance(image, str)
+                and image.content_type.split("/")[0] == "image"
+            ):
                 image = image.url
 
             if question and len(question) > self.maxqlength:
@@ -2640,52 +2637,34 @@ class PollsCog(commands.Cog, name="Polls"):
             if len(choices) < 2:
                 return await interaction.followup.send("You need at least 2 choices!")
 
-            async def update(name, *values):
-                if not isinstance(name, list):
-                    name = [name]
-                if len(name) != len(values):
-                    raise Exception
-
-                txt = [
-                    f"{k} = ${i}" for k, i in zip(name, list(range(1, len(values) + 1)))
-                ]
-
-                async with self.acquire_bot_conn() as conn:
-                    await conn.execute(
-                        f"UPDATE polls SET {', '.join(txt)} WHERE id = ${len(values) + 1}",
-                        *values,
-                        poll_id,
-                    )
-
             clear = lambda x: None if x == clearvalue else x
 
-            names = []
-            values = []
-
-            def append(name, value):
-                names.append(name)
-                values.append(value)
-
-            if question is not None:
-                append("question", question)
-            if choices is not None:
-                append("choices", choices)
+            body = {
+                "id": poll_id,
+                "question": question if question is not None else poll["question"],
+                "choices": choices,
+            }
             if description is not None:
-                append("description", clear(description))
+                body["description"] = clear(description)
             if thread_question is not None:
-                append("thread_question", clear(thread_question))
+                body["thread_question"] = clear(thread_question)
             if image is not None:
-                append("image", clear(image))
+                body["image"] = clear(image)
             if tag is not None:
-                append("tag", clear(tag))
+                body["tag"] = tag
             if show_question is not None:
-                append("show_question", show_question)
+                body["show_question"] = show_question
             if show_options is not None:
-                append("show_options", show_options)
+                body["show_options"] = show_options
             if show_voting is not None:
-                append("show_voting", show_voting)
+                body["show_voting"] = show_voting
 
-            await update(names, *values)
+            try:
+                await self.bot.polls_api.update_polls([body], interaction.user.id)
+            except PollsAPIError:
+                return await interaction.followup.send(
+                    "Something went wrong, please try again", ephemeral=True
+                )
 
         newpoll = await self.fetch_poll(poll_id)
 
@@ -2705,7 +2684,7 @@ class PollsCog(commands.Cog, name="Polls"):
             f"Edited poll `{poll_id}`", embeds=[oldembed, newembed]
         )
 
-    @polledit.autocomplete("poll_id")
+    @poll_edit.autocomplete("poll_id")
     async def polledit_autocomplete_poll_id(
         self, interaction: discord.Interaction, current: int
     ):
@@ -2730,7 +2709,7 @@ class PollsCog(commands.Cog, name="Polls"):
         ]
         return choices
 
-    @polledit.autocomplete("tag")
+    @poll_edit.autocomplete("tag")
     async def polledit_autocomplete_tag(
         self, interaction: discord.Interaction, current: str
     ):
@@ -3468,7 +3447,7 @@ class PollsCog(commands.Cog, name="Polls"):
     @pollsgroup.command(name="bulkedit")
     @poll_manager_only()
     @valid_guild_only()
-    async def pollbulkedit(
+    async def poll_bulk_edit(
         self,
         interaction: discord.Interaction,
         tag: str,
@@ -3488,45 +3467,34 @@ class PollsCog(commands.Cog, name="Polls"):
         if tag is None:
             return await interaction.followup.send("Please select an available tag.")
 
-        async def update(name, *values):
-            if not isinstance(name, list):
-                name = [name]
-            if len(name) != len(values):
-                raise Exception
-
-            txt = [f"{k} = ${i}" for k, i in zip(name, list(range(2, len(values) + 2)))]
-
-            async with self.acquire_bot_conn() as conn:
-                await conn.execute(
-                    f"UPDATE polls SET {', '.join(txt)} WHERE tag = $1",
-                    tag["tag"],
-                    *values,
-                )
-
-        names = []
-        values = []
-
-        def append(name, value):
-            names.append(name)
-            values.append(value)
-
         txt = ["Updating polls:"]
 
         if show_question is not None:
-            append("show_question", show_question)
             txt.append(f"`show_question = {show_question}`")
         if show_options is not None:
-            append("show_options", show_options)
             txt.append(f"`show_options = {show_options}`")
         if show_voting is not None:
-            append("show_voting", show_voting)
             txt.append(f"`show_voting = {show_voting}`")
         txt.append("")
 
-        await update(names, *values)
+        fields = {}
+        if show_question is not None:
+            fields["show_question"] = show_question
+        if show_options is not None:
+            fields["show_options"] = show_options
+        if show_voting is not None:
+            fields["show_voting"] = show_voting
 
-        async with self.acquire_bot_conn() as conn:
-            polls = await conn.fetch("SELECT * FROM polls WHERE tag = $1", tag["tag"])
+        try:
+            updated = await self.bot.polls_api.update_by_tag(
+                tag["tag"], fields, interaction.user.id
+            )
+        except PollsAPIError:
+            return await interaction.followup.send(
+                "Something went wrong, please try again", ephemeral=True
+            )
+
+        polls = [self.poll_dict(p) for p in updated]
 
         for poll in polls:
             txt.append(f"- `{poll['id']}` {poll['question']}")
@@ -3539,7 +3507,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     # await msg.edit(content = "\n".join(txt + ["*Updated!*"]))
 
-    @pollbulkedit.autocomplete("tag")
+    @poll_bulk_edit.autocomplete("tag")
     async def pollbulkedit_autocomplete_tag(
         self, interaction: discord.Interaction, current: str
     ):
