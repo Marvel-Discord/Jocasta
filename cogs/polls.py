@@ -2542,6 +2542,18 @@ class PollsCog(commands.Cog, name="Polls"):
                 if x is not None:
                     final["choices"].append(x)
 
+            if poll["published"] and len(final["choices"]) != len(poll["choices"]):
+                return await interaction.followup.send(
+                    "You can't add/remove choices once the poll's been published!",
+                    ephemeral=True,
+                )
+
+            if poll["published"] and tag is not None:
+                return await interaction.followup.send(
+                    "You can't edit tags once the poll's been published!",
+                    ephemeral=True,
+                )
+
             for k, v in {
                 "tag": tag,
                 "show_question": show_question,
