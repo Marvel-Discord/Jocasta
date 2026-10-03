@@ -1100,16 +1100,16 @@ class PollsCog(commands.Cog, name="Polls"):
             poll = await self.fetch_poll(poll_id)
             if not poll:
                 self.listener_log(f"Poll {poll_id} was deleted")
-                for task_type in ["starts", "ends"]:
-                    for key, task in list(
-                        self.bot.tasks["poll_schedules"][task_type].items()
-                    ):
-                        if str(poll_id) in str(key):
-                            task.cancel()
-                            del self.bot.tasks["poll_schedules"][task_type][key]
-                            self.listener_log(
-                                f"Cancelled {task_type} task for poll {poll_id}"
-                            )
+                for key, task in list(
+                    self.bot.tasks["poll_schedules"]["ends"].items()
+                ):
+                    if key == poll_id:
+                        task.cancel()
+                        del self.bot.tasks["poll_schedules"]["ends"][key]
+                        self.listener_log(
+                            f"Cancelled end task for poll {poll_id}"
+                        )
+                await self.schedule_starts()
                 return
 
             if poll["guild_id"] != self.polls_guild_id():
@@ -1138,19 +1138,23 @@ class PollsCog(commands.Cog, name="Polls"):
     async def update_poll_scheduling(self, poll: dict[str, Any]):
         """Update scheduling for a poll that may have changed timing"""
         try:
-            # Cancel existing schedules for this poll
-            for task_type in ["starts", "ends"]:
-                for key, task in list(
-                    self.bot.tasks["poll_schedules"][task_type].items()
-                ):
-                    if str(poll["id"]) in str(key):
-                        task.cancel()
-                        del self.bot.tasks["poll_schedules"][task_type][key]
-                        self.listener_log(
-                            f"Cancelled {task_type} task for poll {poll['id']}"
-                        )
+            end_key = poll["id"]
+            if end_key in self.bot.tasks["poll_schedules"]["ends"]:
+                self.bot.tasks["poll_schedules"]["ends"][end_key].cancel()
+                del self.bot.tasks["poll_schedules"]["ends"][end_key]
+                self.listener_log(
+                    f"Cancelled end task for poll {poll['id']}"
+                )
 
-            # Reschedule if needed
+            if poll["time"]:
+                start_key = (poll["tag"], poll["time"].timestamp())
+                if start_key in self.bot.tasks["poll_schedules"]["starts"]:
+                    self.bot.tasks["poll_schedules"]["starts"][start_key].cancel()
+                    del self.bot.tasks["poll_schedules"]["starts"][start_key]
+                    self.listener_log(
+                        f"Cancelled start task for poll {poll['id']} at {start_key[1]}"
+                    )
+
             if poll["time"] and not poll["published"]:
                 await self.schedule_starts()
             if poll["duration"] and poll["active"]:
@@ -1178,7 +1182,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     # other stuff i haven't categorised yet #
 
-    async def split_start_polls(self, poll_ids, *, natural: bool = False):
+    async def split_start_polls(self, poll_ids, *, natural: bool = False) -> bool:
         if not isinstance(poll_ids, list):
             poll_ids = [poll_ids]
 
@@ -1194,8 +1198,12 @@ class PollsCog(commands.Cog, name="Polls"):
             else:
                 polls[tid] = [poll_id]
 
+        if not polls:
+            return False
+
         for t, p in polls.items():
             await self.start_polls(p, natural=natural)
+        return True
 
     async def start_poll(self, poll_id: int, **kwargs):
         return await self.start_polls([poll_id], **kwargs)
@@ -1459,14 +1467,21 @@ class PollsCog(commands.Cog, name="Polls"):
             )
 
         if start:
-            await self.split_start_polls(poll_ids, natural=True)
+            started = await self.split_start_polls(poll_ids, natural=True)
+            if started:
+                print(
+                    f"[Polls Scheduler] ({', '.join(str(i) for i in poll_ids)}) Successfully started poll"
+                )
+            else:
+                print(
+                    f"[Polls Scheduler] ({', '.join(str(i) for i in poll_ids)}) Skipped start (poll(s) no longer exist)"
+                )
         else:
             for p in poll_ids:
                 await self.end_poll(p, natural=True)
-
-        print(
-            f"[Polls Scheduler] ({', '.join(str(i) for i in poll_ids)}) Successfully {'started' if start else 'ended'} poll"
-        )
+            print(
+                f"[Polls Scheduler] ({', '.join(str(i) for i in poll_ids)}) Successfully ended poll"
+            )
 
     async def schedule_starts(
         self, *, tag: int = 0, timestamps: list = [], natural: bool = False
@@ -1476,6 +1491,7 @@ class PollsCog(commands.Cog, name="Polls"):
         )
         polls = [self.poll_dict(p) for p in polls]
 
+        to_delete = []
         for k, v in self.bot.tasks["poll_schedules"]["starts"].items():
             if (
                 (not timestamps or k[1] in timestamps)
@@ -1486,6 +1502,9 @@ class PollsCog(commands.Cog, name="Polls"):
                     f'[Polls Scheduler] Cancelled "start" scheduler at {k[1]} ({_dt.datetime.fromtimestamp(k[1], _dt.timezone.utc)})'
                 )
                 v.cancel()
+                to_delete.append(k)
+        for k in to_delete:
+            del self.bot.tasks["poll_schedules"]["starts"][k]
 
         groups = {}
 
