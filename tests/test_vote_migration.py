@@ -50,7 +50,7 @@ def make_counts():
 async def test_vote_calls_cast_vote_with_poll_user_and_choice():
     cog = make_cog()
     cog.bot.polls_api.cast_vote = AsyncMock(return_value=make_counts())
-    cog.updatepollmessage = AsyncMock()
+    cog.update_poll_message = AsyncMock()
 
     result = await cog.cast_vote(make_poll(), make_user(1234), 1)
 
@@ -61,7 +61,7 @@ async def test_vote_calls_cast_vote_with_poll_user_and_choice():
 async def test_vote_clear_sentinel_maps_to_none_for_api_delete():
     cog = make_cog()
     cog.bot.polls_api.cast_vote = AsyncMock(return_value=make_counts())
-    cog.updatepollmessage = AsyncMock()
+    cog.update_poll_message = AsyncMock()
 
     result = await cog.cast_vote(make_poll(), make_user(1234), -1)
 
@@ -72,12 +72,12 @@ async def test_vote_clear_sentinel_maps_to_none_for_api_delete():
 async def test_vote_updates_poll_from_vote_counts_and_rerenders():
     cog = make_cog()
     cog.bot.polls_api.cast_vote = AsyncMock(return_value=make_counts())
-    cog.updatepollmessage = AsyncMock()
+    cog.update_poll_message = AsyncMock()
 
     result = await cog.cast_vote(make_poll(), make_user(1234), 0)
 
-    cog.updatepollmessage.assert_awaited_once()
-    await_args = cog.updatepollmessage.await_args
+    cog.update_poll_message.assert_awaited_once()
+    await_args = cog.update_poll_message.await_args
     assert await_args is not None
     rendered = await_args.args[0]
     assert rendered["votes"] == [1, 2, 0]
@@ -88,7 +88,7 @@ async def test_vote_updates_poll_from_vote_counts_and_rerenders():
 async def test_vote_api_error_propagates_without_rerender():
     cog = make_cog()
     cog.bot.polls_api.cast_vote = AsyncMock(side_effect=PollsAPIError(503, "down"))
-    cog.updatepollmessage = AsyncMock()
+    cog.update_poll_message = AsyncMock()
 
     try:
         await cog.cast_vote(make_poll(), make_user(1234), 1)
@@ -97,7 +97,7 @@ async def test_vote_api_error_propagates_without_rerender():
     else:
         raise AssertionError("PollsAPIError should propagate to the view callback")
 
-    cog.updatepollmessage.assert_not_awaited()
+    cog.update_poll_message.assert_not_awaited()
 
 
 def make_interaction(user_id=1234):

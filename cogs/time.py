@@ -60,7 +60,7 @@ class TimeCog(discord.ext.commands.Cog, name = "Time"):
 			return []
 
 	async def autocomplete_timestamp(self, interaction: discord.Interaction, current: int):
-		timestamp = self.strtodatetime(current)
+		timestamp = self.str_to_datetime(current)
 		choices = [app_commands.Choice(name = self.strf(t), value = int(t.timestamp())) for t in timestamp]
 		return choices[:25]
 
@@ -155,7 +155,7 @@ class TimeCog(discord.ext.commands.Cog, name = "Time"):
 		"""Generates a timestamp from a written date and time."""
 		await interaction.response.defer()
 
-		timestamps = self.strtodatetime(time)
+		timestamps = self.str_to_datetime(time)
 
 		if not raw:
 			txt = ["<t:{0}:F> | `{0}`".format(int(i.timestamp())) for i in timestamps]
@@ -165,7 +165,7 @@ class TimeCog(discord.ext.commands.Cog, name = "Time"):
 			await interaction.followup.send('\n'.join(str(int(i.timestamp())) for i in timestamps))
 
 	@staticmethod
-	def strtodatetime(time: str):
+	def str_to_datetime(time: str):
 		time = time.strip()
 
 		if time.isdigit():

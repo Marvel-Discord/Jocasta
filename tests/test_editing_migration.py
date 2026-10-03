@@ -20,8 +20,8 @@ def make_cog():
 
     cog = PollsCog(FakeBot())
     cog.guild_ids = [288896937074360321]
-    unwrap_command(cog, "pollsme")
-    unwrap_command(cog, "polladminsync")
+    unwrap_command(cog, "polls_me")
+    unwrap_command(cog, "poll_admin_sync")
     unwrap_command(cog, "poll_schedule")
     unwrap_command(cog, "poll_start")
     unwrap_command(cog, "poll_end")
@@ -110,7 +110,7 @@ async def test_poll_delete_confirmed_calls_delete_polls_with_user():
     poll_dict = cog.poll_dict(make_poll_model(published=False))
     cog.fetch_poll = AsyncMock(return_value=poll_dict)
     cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
-    cog.pollinfoembed = AsyncMock(return_value=MagicMock())
+    cog.poll_info_embed = AsyncMock(return_value=MagicMock())
     cog.bot.polls_api.delete_polls = AsyncMock(return_value={"deletedCount": 1})
 
     interaction = MagicMock()
@@ -141,7 +141,7 @@ async def test_poll_delete_api_error_sends_ephemeral_reply():
     poll_dict = cog.poll_dict(make_poll_model(published=False))
     cog.fetch_poll = AsyncMock(return_value=poll_dict)
     cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
-    cog.pollinfoembed = AsyncMock(return_value=MagicMock())
+    cog.poll_info_embed = AsyncMock(return_value=MagicMock())
     cog.bot.polls_api.delete_polls = AsyncMock(side_effect=PollsAPIError(503, "down"))
 
     interaction = MagicMock()
@@ -178,7 +178,7 @@ async def test_poll_edit_param_path_sends_full_body_with_user():
     cog.bot.polls_api.update_polls = AsyncMock(return_value=[poll_dict])
     cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
     cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
-    cog.pollinfoembed = AsyncMock(return_value=MagicMock())
+    cog.poll_info_embed = AsyncMock(return_value=MagicMock())
 
     interaction = MagicMock()
     interaction.user.id = 1234
@@ -206,7 +206,7 @@ async def test_poll_edit_clear_image_sends_null():
     cog.bot.polls_api.update_polls = AsyncMock(return_value=[poll_dict])
     cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
     cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
-    cog.pollinfoembed = AsyncMock(return_value=MagicMock())
+    cog.poll_info_embed = AsyncMock(return_value=MagicMock())
 
     interaction = MagicMock()
     interaction.user.id = 1234
@@ -229,7 +229,7 @@ async def test_poll_edit_api_error_sends_ephemeral_reply():
     cog.bot.polls_api.update_polls = AsyncMock(side_effect=PollsAPIError(403, "denied"))
     cog.fetch_guild_info = AsyncMock(return_value=make_guild_dict())
     cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
-    cog.pollinfoembed = AsyncMock(return_value=MagicMock())
+    cog.poll_info_embed = AsyncMock(return_value=MagicMock())
 
     interaction = MagicMock()
     interaction.user.id = 1234
@@ -248,11 +248,11 @@ async def test_poll_edit_api_error_sends_ephemeral_reply():
 async def test_poll_create_sends_body_without_id_and_uses_assigned_id():
     cog = make_cog()
     created = make_poll_model(id=777, published=False)
-    cog.fetchguildid = AsyncMock(return_value=100)
-    cog.validtag = AsyncMock(return_value=make_tag_dict())
+    cog.fetch_guild_id = AsyncMock(return_value=100)
+    cog.valid_tag = AsyncMock(return_value=make_tag_dict())
     cog.bot.polls_api.create_polls = AsyncMock(return_value=[created])
     cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(created))
-    cog.pollinfoembed = AsyncMock(return_value=MagicMock())
+    cog.poll_info_embed = AsyncMock(return_value=MagicMock())
 
     interaction = MagicMock()
     interaction.user.id = 1234
@@ -276,7 +276,7 @@ async def test_poll_create_sends_body_without_id_and_uses_assigned_id():
 
 async def test_poll_create_without_tag_is_rejected():
     cog = make_cog()
-    cog.fetchguildid = AsyncMock(return_value=100)
+    cog.fetch_guild_id = AsyncMock(return_value=100)
     cog.bot.polls_api.create_polls = AsyncMock()
 
     interaction = MagicMock()
@@ -295,8 +295,8 @@ async def test_poll_create_without_tag_is_rejected():
 
 async def test_poll_create_api_error_sends_ephemeral_reply():
     cog = make_cog()
-    cog.fetchguildid = AsyncMock(return_value=100)
-    cog.validtag = AsyncMock(return_value=make_tag_dict())
+    cog.fetch_guild_id = AsyncMock(return_value=100)
+    cog.valid_tag = AsyncMock(return_value=make_tag_dict())
     cog.bot.polls_api.create_polls = AsyncMock(side_effect=PollsAPIError(0, "network error"))
 
     interaction = MagicMock()
@@ -315,11 +315,11 @@ async def test_poll_create_api_error_sends_ephemeral_reply():
 
 async def test_poll_bulk_edit_updates_by_tag_and_lists_response():
     cog = make_cog()
-    cog.fetchguildid = AsyncMock(return_value=100)
-    cog.validtag = AsyncMock(return_value=make_tag_dict())
+    cog.fetch_guild_id = AsyncMock(return_value=100)
+    cog.valid_tag = AsyncMock(return_value=make_tag_dict())
     updated = make_poll_model(id=42)
     cog.bot.polls_api.update_by_tag = AsyncMock(return_value=[updated])
-    cog.updatepollmessage = AsyncMock()
+    cog.update_poll_message = AsyncMock()
 
     interaction = MagicMock()
     interaction.user.id = 1234
@@ -333,7 +333,7 @@ async def test_poll_bulk_edit_updates_by_tag_and_lists_response():
     assert args[0] == 1
     assert args[1] == {"show_voting": False}
     assert args[2] == 1234
-    cog.updatepollmessage.assert_awaited_once()
+    cog.update_poll_message.assert_awaited_once()
     followup_args = interaction.followup.send.await_args
     assert followup_args is not None
     sent = followup_args.args[0]
