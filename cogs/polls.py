@@ -8,7 +8,6 @@ import re
 import traceback
 
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
 from typing import Any, Protocol, cast
 
 import discord
@@ -1170,15 +1169,6 @@ class PollsCog(commands.Cog, name="Polls"):
     async def cog_unload(self):
         """Clean up when the cog is unloaded"""
         self._ws_stop_task = self.bot.loop.create_task(self._stop_ws_listener())
-
-    @asynccontextmanager
-    async def acquire_bot_conn(self):
-        conn = await self.bot.db.acquire()
-        await conn.execute("SET application_name = 'bot'")
-        try:
-            yield conn
-        finally:
-            await self.bot.db.release(conn)
 
     # other stuff i haven't categorised yet #
 

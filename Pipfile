@@ -6,7 +6,6 @@ name = "pypi"
 [packages]
 "discord.py" = "*"
 pytz = "~=2022.2.1"
-asyncpg = "~=0.29.0"
 python-dotenv = "~=1.2.2"
 aiohttp = "~=3.14.3"
 natsort = "~=8.3.1"
