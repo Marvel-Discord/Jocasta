@@ -140,17 +140,11 @@ class OwnerCog(commands.Cog, name="Owner"):
 
         if name == 'cogs.polls':
             for x in ['starts', 'ends']:
-                for k, v in self.bot.tasks['poll_schedules'][x].items():
-                    try:
-                        v.cancel()
-                    except Exception:
-                        pass
-
-        if name == 'funcs.postgresql':
-            try:
-                await self.bot.db.close()
-            except Exception:
-                print("Couldn't close PostgreSQL connection")
+                 for k, v in self.bot.tasks['poll_schedules'][x].items():
+                     try:
+                         v.cancel()
+                     except Exception:
+                         pass
 
 
 async def setup(bot):

@@ -6,13 +6,6 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 BOT_PREFIX = os.getenv("BOT_PREFIX", "~")
 
-postgres_credentials = {
-    "user": os.getenv("POSTGRES_USER"),
-    "password": os.getenv("POSTGRES_PASSWORD"),
-    "database": os.getenv("POSTGRES_DATABASE"),
-    "host": os.getenv("POSTGRES_HOST"),
-    "port": int(os.getenv("POSTGRES_PORT", 5432)),
-}
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 polls_api_base_url = os.getenv("POLLS_API_BASE_URL", "http://localhost:8000/api/v1")
 polls_api_token = os.getenv("POLLS_API_TOKEN", "")
