@@ -23,7 +23,7 @@ def make_cog():
             self.wait_until_ready = AsyncMock()
 
     cog = PollsCog(FakeBot())
-    cog.guild_ids = [288896937074360321]
+    cog._home_guild_ids = [288896937074360321]
     unwrap_command(cog, "polls_me")
     unwrap_command(cog, "poll_admin_sync")
     unwrap_command(cog, "poll_schedule")
@@ -520,7 +520,7 @@ async def test_poll_end_command_passes_user_for_early_end():
 
 async def test_schedule_starts_requests_unpublished_with_start_from_api():
     cog = make_cog()
-    cog.guild_ids = [100]
+    cog._home_guild_ids = [100]
     scheduled = make_poll_model(published=False)
     cog.bot.polls_api.sync_all_polls = AsyncMock(
         return_value=[
@@ -545,7 +545,7 @@ async def test_schedule_starts_requests_unpublished_with_start_from_api():
 
 async def test_schedule_ends_fetches_active_with_end_via_api():
     cog = make_cog()
-    cog.guild_ids = [100]
+    cog._home_guild_ids = [100]
     cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[])
     created = []
     cog.bot.loop.create_task = lambda coro: (created.append(coro), coro.close())[1]
