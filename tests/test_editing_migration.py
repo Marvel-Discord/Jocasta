@@ -19,7 +19,7 @@ def make_cog():
             self.wait_until_ready = AsyncMock()
 
     cog = PollsCog(FakeBot())
-    cog.guild_ids = [288896937074360321]
+    cog._home_guild_ids = [288896937074360321]
     unwrap_command(cog, "polls_me")
     unwrap_command(cog, "poll_admin_sync")
     unwrap_command(cog, "poll_schedule")

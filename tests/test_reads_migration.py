@@ -20,7 +20,7 @@ def make_cog():
             self.polls_api = MagicMock()
 
     cog = PollsCog(FakeBot())
-    cog.guild_ids = [288896937074360321]
+    cog._home_guild_ids = [288896937074360321]
     unwrap_command(cog, "polls_me")
     unwrap_command(cog, "poll_admin_sync")
     return cog
@@ -129,9 +129,16 @@ async def test_fetch_all_polls_composes_join_shape_and_filters_published():
 def test_polls_guild_id_prefers_guild_ids_attr():
     cog = make_cog()
     assert cog.polls_guild_id() == 288896937074360321
-    cog.guild_ids = None
+    cog._home_guild_ids = None
     cog.bot.guilds = [MagicMock(id=999)]
     assert cog.polls_guild_id() == 999
+
+
+def test_polls_guild_id_independent_of_slash_scoping():
+    """Regression: guild_ids (slash scoping) can be None without breaking the home guild."""
+    cog = make_cog()
+    cog.guild_ids = None  # simulates GLOBAL_SLASHIES=True
+    assert cog.polls_guild_id() == 288896937074360321  # still reads _home_guild_ids
 
 
 def test_search_matches_passes_when_no_filters_set():

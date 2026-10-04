@@ -332,8 +332,8 @@ class PollsCog(commands.Cog, name="Polls"):
         return True
 
     def polls_guild_id(self) -> int:
-        if self.guild_ids:
-            return self.guild_ids[0]
+        if self._home_guild_ids:
+            return self._home_guild_ids[0]
         return self.bot.guilds[0].id
 
     def poll_dict(
@@ -893,6 +893,8 @@ class PollsCog(commands.Cog, name="Polls"):
 
         return polls
 
+    _home_guild_ids = guild_ids
+
     guild_ids = None if global_slashies else guild_ids
 
     polls_group = app_commands.Group(
@@ -1126,13 +1128,18 @@ class PollsCog(commands.Cog, name="Polls"):
 
     async def resync_from_api(self):
         """Full resync on every WS (re)connect: rebuild timers and views."""
+        await self.bot.wait_until_ready()
         self.listener_log("Resyncing from API")
-        await asyncio.gather(
-            self.schedule_starts(),
-            self.schedule_ends(),
-            self.on_startup_buttons(),
-            self.on_startup_self_assign(),
-        )
+        try:
+            await asyncio.gather(
+                self.schedule_starts(),
+                self.schedule_ends(),
+                self.on_startup_buttons(),
+                self.on_startup_self_assign(),
+            )
+        except Exception:
+            traceback.print_exc()
+            self.listener_log("Resync failed — will retry on next WS reconnect")
 
     async def update_poll_scheduling(self, poll: dict[str, Any]):
         """Update scheduling for a poll that may have changed timing"""
