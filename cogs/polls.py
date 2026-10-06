@@ -1383,6 +1383,9 @@ class PollsCog(commands.Cog, name="Polls"):
         tag = await self.fetch_tag(poll["tag"])
         guild = await self.fetch_guild_info(poll["guild_id"])
         if guild is None:
+            self.listener_log(
+                f"end_poll: guild fetch failed for poll {poll_id}, aborting"
+            )
             return
 
         channel_id = guild["default_channel_id"]

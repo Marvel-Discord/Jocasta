@@ -501,6 +501,24 @@ async def test_end_poll_early_end_overwrites_end_time_via_update():
     assert cog.bot.polls_api.update_polls.await_args.args[1] == 1234
 
 
+async def test_end_poll_guild_none_logs_and_aborts():
+    cog = make_cog()
+    poll_dict = cog.poll_dict(make_poll_model())
+    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
+    cog.fetch_guild_info = AsyncMock(return_value=None)
+    cog.listener_log = MagicMock()
+    cog.bot.polls_api.end_poll = AsyncMock()
+    cog.bot.polls_api.update_polls = AsyncMock()
+
+    await cog.end_poll(42)
+
+    cog.bot.polls_api.end_poll.assert_not_awaited()
+    cog.bot.polls_api.update_polls.assert_not_awaited()
+    cog.listener_log.assert_called_once()
+    assert "guild" in cog.listener_log.call_args.args[0].lower()
+
+
 async def test_poll_end_command_passes_user_for_early_end():
     cog = make_cog()
     poll_dict = cog.poll_dict(make_poll_model(active=True))
