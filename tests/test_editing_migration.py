@@ -11,7 +11,7 @@ from tests.conftest import unwrap_command
 def make_cog():
     class FakeBot:
         def __init__(self):
-            self.tasks = {"poll_schedules": {"starts": {}, "ends": {}}}
+            self.tasks = {}
             self.tree = MagicMock()
             self.loop = MagicMock()
             self.loop.create_task.side_effect = lambda coro: coro.close()

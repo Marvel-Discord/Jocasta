@@ -181,11 +181,6 @@ class PollsCog(commands.Cog, name="Polls"):
 
         self.bot.tree.on_error = self.on_app_command_error
 
-        self.bot.tasks["poll_schedules"] = {
-            "starts": {},
-            "ends": {},
-        }
-
         self._rendering: set[int] = set()
         self._end_watermark_fallback: _dt.datetime | None = None
 
@@ -1102,44 +1097,53 @@ class PollsCog(commands.Cog, name="Polls"):
             print(f"[Polls Listener] {msg}")
 
     async def handle_poll_event(self, poll_id: int):
-        """Unified WS event handler: debounce-collapsed fetch-and-reconcile."""
+        """Unified WS event handler: debounce-collapsed fetch-and-reconcile.
+
+        The frame's operation (update vs the scheduler's synthetic
+        start/end) is a wake-up hint only — the fetched state is the
+        truth, which keeps the debounce collapse safe when frames of
+        different kinds arrive inside one window:
+          - deleted → nothing to do
+          - foreign guild → ignore
+          - started but unrendered (published, no message_id) → render
+          - ended and rendered → idempotent end-of-life effects
+          - otherwise → re-render
+        """
         try:
             poll = await self.fetch_poll(poll_id)
             if not poll:
                 self.listener_log(f"Poll {poll_id} was deleted")
-                for key, task in list(
-                    self.bot.tasks["poll_schedules"]["ends"].items()
-                ):
-                    if key == poll_id:
-                        task.cancel()
-                        del self.bot.tasks["poll_schedules"]["ends"][key]
-                        self.listener_log(
-                            f"Cancelled end task for poll {poll_id}"
-                        )
-                await self.schedule_starts()
                 return
 
             if poll["guild_id"] != self.polls_guild_id():
+                return
+
+            if poll["published"] and not poll["message_id"]:
+                await self.render_pending_poll(poll_id)
+                return
+
+            if poll["end_time"] and not poll["active"] and poll["message_id"]:
+                await self.finalize_ended_poll(poll)
                 return
 
             if poll["published"]:
                 await self.update_poll_message(poll)
                 self.listener_log(f"Updated message for poll {poll_id}")
 
-            await self.update_poll_scheduling(poll)
-
         except Exception as e:
             self.listener_log(f"Error handling event for {poll_id}: {e}")
             traceback.print_exc()
 
     async def resync_from_api(self):
-        """Full resync on every WS (re)connect: rebuild timers and views."""
+        """Full resync on every WS (re)connect. The API's scheduler owns
+        timing; these scans are the correctness backstop covering any
+        downtime length, plus the persistent-view re-registration."""
         await self.bot.wait_until_ready()
         self.listener_log("Resyncing from API")
         try:
             await asyncio.gather(
-                self.schedule_starts(),
-                self.schedule_ends(),
+                self.process_pending_renders(),
+                self.process_missed_ends(),
                 self.on_startup_buttons(),
                 self.on_startup_self_assign(),
             )
@@ -1208,34 +1212,6 @@ class PollsCog(commands.Cog, name="Polls"):
         for poll in polls:
             await self.finalize_ended_poll(self.poll_dict(poll))
         await self._set_end_watermark(discord.utils.utcnow())
-
-    async def update_poll_scheduling(self, poll: dict[str, Any]):
-        """Update scheduling for a poll that may have changed timing"""
-        try:
-            end_key = poll["id"]
-            if end_key in self.bot.tasks["poll_schedules"]["ends"]:
-                self.bot.tasks["poll_schedules"]["ends"][end_key].cancel()
-                del self.bot.tasks["poll_schedules"]["ends"][end_key]
-                self.listener_log(
-                    f"Cancelled end task for poll {poll['id']}"
-                )
-
-            if poll["time"]:
-                start_key = (poll["tag"], poll["time"].timestamp())
-                if start_key in self.bot.tasks["poll_schedules"]["starts"]:
-                    self.bot.tasks["poll_schedules"]["starts"][start_key].cancel()
-                    del self.bot.tasks["poll_schedules"]["starts"][start_key]
-                    self.listener_log(
-                        f"Cancelled start task for poll {poll['id']} at {start_key[1]}"
-                    )
-
-            if poll["time"] and not poll["published"]:
-                await self.schedule_starts()
-            if poll["duration"] and poll["active"]:
-                await self.schedule_ends()
-
-        except Exception as e:
-            self.listener_log(f"Error updating scheduling for poll {poll['id']}: {e}")
 
     async def _stop_ws_listener(self):
         self.poll_ws_task.cancel()
@@ -1349,18 +1325,6 @@ class PollsCog(commands.Cog, name="Polls"):
                     poll["id"], main_msg.id, crosspost_ids
                 )
 
-            for poll, t in polls:
-                if poll is None:
-                    continue
-                if poll["time"]:  # needs to be old time
-                    await self.schedule_starts(
-                        timestamps=[poll["time"].timestamp()],
-                        natural=natural,
-                        tag=poll["tag"],
-                    )
-                if poll["duration"]:
-                    await self.schedule_ends(poll_ids=[poll["id"]], natural=natural)
-
             if tag and tag["end_message"]:
                 txt: dict[str, Any] = {"content": None, "embed": None, "view": None}
 
@@ -1444,81 +1408,30 @@ class PollsCog(commands.Cog, name="Polls"):
             for i in poll_ids:
                 self._rendering.discard(i)
 
-    async def end_poll(
-        self,
-        poll_id: int,
-        *,
-        end_now: bool = False,
-        lock_thread: bool = True,
-        natural: bool = True,
-        user_id: int | None = None,
-    ):
-
-        current_time = discord.utils.utcnow()
-
+    async def end_poll(self, poll_id: int, *, user_id: int | None = None):
+        """Manual end (/polls end): stamp end_time = now via the update
+        endpoint (a normal write — its WS echo is suppressed for bot
+        calls), then run the end-of-life effects. Natural ends are the
+        API scheduler's business now; this method no longer serves them."""
         poll = await self.fetch_poll(poll_id)
-        if poll is None:
-            return
-        tag = await self.fetch_tag(poll["tag"])
-        guild = await self.fetch_guild_info(poll["guild_id"])
-        if guild is None:
-            self.listener_log(
-                f"end_poll: guild fetch failed for poll {poll_id}, aborting"
-            )
+        if poll is None or not poll["active"]:
             return
 
-        channel_id = guild["default_channel_id"]
-        if tag:
-            if tag["channel_id"]:
-                channel_id = tag["channel_id"]
-
-        if end_now:
-            await self.bot.polls_api.update_polls(
-                [
-                    {
-                        "id": poll_id,
-                        "question": poll["question"],
-                        "choices": poll["choices"],
-                        "end_time": current_time.isoformat(),
-                    }
-                ],
-                user_id,
-            )
-        else:
-            await self.bot.polls_api.end_poll(poll_id)
-
-        if poll["duration"]:
-            await self.schedule_ends(poll_ids=[poll["id"]], natural=natural)
-
-        channel = self.bot.get_channel(channel_id)
-        crossposts = (
-            [self.bot.get_channel(i) for i in tag["crosspost_channels"]] if tag else []
+        await self.bot.polls_api.update_polls(
+            [
+                {
+                    "id": poll_id,
+                    "question": poll["question"],
+                    "choices": poll["choices"],
+                    "end_time": discord.utils.utcnow().isoformat(),
+                }
+            ],
+            user_id,
         )
-
-        guilds = [
-            self.bot.get_guild(g) for g in {i.guild.id for i in [channel] + crossposts}
-        ]
-
-        try:
-            if poll["thread_question"]:
-                for thread_id in [poll["message_id"]] + (
-                    poll["crosspost_message_ids"]
-                    if poll["crosspost_message_ids"]
-                    else []
-                ):
-                    for g in guilds:
-                        thread = g.get_channel_or_thread(thread_id)
-                        if thread is None:
-                            continue
-                        else:
-                            await thread.edit(archived=True, locked=lock_thread)
-                            break
-        except Exception as e:
-            traceback.print_exc()
 
         poll = await self.fetch_poll(poll["id"])
         if poll is not None:
-            await self.update_poll_message(poll)
+            await self.finalize_ended_poll(poll)
 
     async def finalize_ended_poll(self, poll: dict[str, Any]):
         """Idempotent end-of-life Discord effects: archive + lock the
@@ -1565,104 +1478,6 @@ class PollsCog(commands.Cog, name="Polls"):
             traceback.print_exc()
 
         await self.update_poll_message(poll)
-
-    async def scheduler(
-        self, polls: list[dict[str, Any]] | dict[str, Any], start: bool
-    ):
-        if not isinstance(polls, list):
-            polls = [polls]
-
-        if start:
-            time = polls[0]["time"]
-        else:
-            time = polls[0]["time"] + polls[0]["duration"]
-
-        # Saving on memory
-        poll_ids = [i["id"] for i in polls]
-
-        sleep_duration = time - discord.utils.utcnow()
-        if sleep_duration.total_seconds() > 0:
-            print(
-                f"[Polls Scheduler] ({', '.join(str(i) for i in poll_ids)}) Started schedule \"{'start' if start else 'end'}\" to end in {sleep_duration} ({time})"
-            )
-            await asyncio.sleep(sleep_duration.total_seconds())
-        else:
-            print(
-                f"[Polls Scheduler] ({', '.join(str(i) for i in poll_ids)}) {'Started' if start else 'Ended'} poll immediately from overdue timer ({time})"
-            )
-
-        if start:
-            started = await self.split_start_polls(poll_ids, natural=True)
-            if started:
-                print(
-                    f"[Polls Scheduler] ({', '.join(str(i) for i in poll_ids)}) Successfully started poll"
-                )
-            else:
-                print(
-                    f"[Polls Scheduler] ({', '.join(str(i) for i in poll_ids)}) Skipped start (poll(s) no longer exist)"
-                )
-        else:
-            for p in poll_ids:
-                await self.end_poll(p, natural=True)
-            print(
-                f"[Polls Scheduler] ({', '.join(str(i) for i in poll_ids)}) Successfully ended poll"
-            )
-
-    async def schedule_starts(
-        self, *, tag: int = 0, timestamps: list = [], natural: bool = False
-    ):
-        polls = await self.bot.polls_api.sync_all_polls(
-            self.polls_guild_id(), has_start=True, published=False
-        )
-        polls = [self.poll_dict(p) for p in polls]
-
-        to_delete = []
-        for k, v in self.bot.tasks["poll_schedules"]["starts"].items():
-            if (
-                (not timestamps or k[1] in timestamps)
-                and (tag == 0 or tag == k[0])
-                and not natural
-            ):
-                print(
-                    f'[Polls Scheduler] Cancelled "start" scheduler at {k[1]} ({_dt.datetime.fromtimestamp(k[1], _dt.timezone.utc)})'
-                )
-                v.cancel()
-                to_delete.append(k)
-        for k in to_delete:
-            del self.bot.tasks["poll_schedules"]["starts"][k]
-
-        groups = {}
-
-        for p in polls:
-            if (p["tag"], p["time"]) not in groups.keys():
-                groups[(p["tag"], p["time"])] = [p]
-            else:
-                groups[(p["tag"], p["time"])].append(p)
-
-        for k, v in groups.items():
-            if k:
-                if not timestamps or k[1].timestamp() in timestamps:
-                    self.bot.tasks["poll_schedules"]["starts"][
-                        (k[0], k[1].timestamp())
-                    ] = self.bot.loop.create_task(self.scheduler(v, True))
-
-    async def schedule_ends(self, *, poll_ids: list = [], natural: bool = False):
-        polls = await self.bot.polls_api.sync_all_polls(
-            self.polls_guild_id(), has_end=True, active=True
-        )
-        polls = [self.poll_dict(p) for p in polls]
-
-        for k, v in self.bot.tasks["poll_schedules"]["ends"].items():
-            if (not poll_ids or k in poll_ids) and not natural:
-                print(f'[Polls Scheduler] Cancelled "end" scheduler for ({k})')
-                v.cancel()
-
-        for p in polls:
-            if p["duration"]:
-                if not poll_ids or p["id"] in poll_ids:
-                    self.bot.tasks["poll_schedules"]["ends"][p["id"]] = (
-                        self.bot.loop.create_task(self.scheduler(p, False))
-                    )
 
     async def format_poll_message(self, poll: dict[str, Any]) -> dict:
         content = None
@@ -2954,16 +2769,6 @@ class PollsCog(commands.Cog, name="Polls"):
                 interaction.user.id,
             )
 
-            if poll["time"]:
-                if not clear_schedule:
-                    await self.schedule_starts(
-                        timestamps=[schedule_ts, poll["time"].timestamp()]
-                    )
-                else:
-                    await self.schedule_starts(timestamps=[poll["time"].timestamp()])
-            elif not clear_schedule:
-                await self.schedule_starts(timestamps=[schedule_ts])
-
         if (
             duration
             and duration != -1
@@ -2992,8 +2797,6 @@ class PollsCog(commands.Cog, name="Polls"):
                 ],
                 interaction.user.id,
             )
-
-            await self.schedule_ends(poll_ids=[poll_id])
 
         poll = await self.fetch_poll(poll_id)
         if poll is None:
@@ -3129,8 +2932,6 @@ class PollsCog(commands.Cog, name="Polls"):
 
         current_time = discord.utils.utcnow()
 
-        previous_time = poll["time"]
-
         body = {
             "id": poll_id,
             "question": poll["question"],
@@ -3146,11 +2947,6 @@ class PollsCog(commands.Cog, name="Polls"):
             ).isoformat()
 
         await self.bot.polls_api.update_polls([body], interaction.user.id)
-
-        if previous_time:
-            await self.schedule_starts(
-                timestamps=[previous_time.timestamp()], tag=poll["tag"]
-            )
 
         result = await self.start_poll(poll["id"])
 
@@ -3202,7 +2998,7 @@ class PollsCog(commands.Cog, name="Polls"):
         if not poll["active"]:
             return await interaction.followup.send(f"This poll is not active!")
 
-        await self.end_poll(poll["id"], end_now=True, user_id=interaction.user.id)
+        await self.end_poll(poll["id"], user_id=interaction.user.id)
 
         await interaction.followup.send(f"Successfully ended the poll!")
 
@@ -3772,9 +3568,9 @@ class PollsCog(commands.Cog, name="Polls"):
         refresh_polls = lambda: self.search_polls_by_keyword("")
         polls = await refresh_polls()
 
-        await task(self.schedule_starts, "start_schedule")
+        await task(self.process_pending_renders, "start_schedule")
 
-        await task(self.schedule_ends, "end_schedule")
+        await task(self.process_missed_ends, "end_schedule")
 
         async def update_msg():
             poll_filter = "published" if include_ended else "active"

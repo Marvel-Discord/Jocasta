@@ -357,8 +357,8 @@ async def test_polls_me_no_votes_makes_no_wasted_fetches():
 async def test_admin_sync_skips_update_votes_task():
     cog = make_cog()
     cog.fetch_all_polls = AsyncMock(return_value=[])
-    cog.schedule_starts = AsyncMock()
-    cog.schedule_ends = AsyncMock()
+    cog.process_pending_renders = AsyncMock()
+    cog.process_missed_ends = AsyncMock()
     cog.on_startup_self_assign = AsyncMock()
     cog.do_update_poll_message = AsyncMock()
 
@@ -370,6 +370,6 @@ async def test_admin_sync_skips_update_votes_task():
 
     await cog.poll_admin_sync(interaction)
     cog.fetch_all_polls.assert_awaited_once_with(show_unpublished=False)
-    cog.schedule_starts.assert_awaited_once()
-    cog.schedule_ends.assert_awaited_once()
+    cog.process_pending_renders.assert_awaited_once()
+    cog.process_missed_ends.assert_awaited_once()
     cog.on_startup_self_assign.assert_awaited_once()

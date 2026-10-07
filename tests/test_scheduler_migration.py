@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
+import pytest
 
 from cogs.polls import PollsCog
 from funcs.polls_api_models import Poll
@@ -194,13 +195,18 @@ async def test_finalize_ended_poll_archives_threads_and_rerenders():
     )
     channel = MagicMock()
     channel.guild = MagicMock()
-    channel.guild.get_channel_or_thread = MagicMock(return_value=None)
     cog.bot.get_channel = MagicMock(return_value=channel)
-    cog.bot.get_guild = MagicMock(return_value=MagicMock())
+    thread = make_thread(poll["message_id"])
+    guild = MagicMock()
+    guild.get_channel_or_thread = MagicMock(
+        side_effect=lambda cid: thread if cid == poll["message_id"] else None
+    )
+    cog.bot.get_guild = MagicMock(return_value=guild)
     cog.update_poll_message = AsyncMock()
 
     await cog.finalize_ended_poll(poll)
 
+    thread.edit.assert_awaited_once_with(archived=True, locked=True)
     cog.update_poll_message.assert_awaited_once_with(poll)
 
 
@@ -214,3 +220,181 @@ async def test_finalize_ended_poll_aborts_when_guild_fetch_fails():
     await cog.finalize_ended_poll(poll)
 
     cog.update_poll_message.assert_not_awaited()
+
+
+async def test_start_polls_holds_render_guard_through_render():
+    cog = make_cog()
+    poll = cog.poll_dict(make_poll_model())
+    observed = []
+
+    async def fetch_and_observe(poll_id):
+        observed.append(poll_id in cog._rendering)
+        return poll
+
+    cog.fetch_poll = AsyncMock(side_effect=fetch_and_observe)
+    cog.fetch_tag = AsyncMock(return_value=None)
+    cog.fetch_guild_info = AsyncMock(
+        return_value={
+            "guild_id": 100,
+            "default_channel_id": 300,
+            "manage_channel_id": [301],
+            "manager_role_id": [302],
+            "default_colour": None,
+            "fallback_channel_id": 303,
+        }
+    )
+    cog.format_poll_message = AsyncMock(
+        return_value={"content": None, "embed": None, "view": None}
+    )
+    cog.update_poll_message = AsyncMock()
+    cog.bot.polls_api.publish_poll = AsyncMock()
+    channel = MagicMock()
+    msg = MagicMock()
+    channel.send = AsyncMock(return_value=msg)
+    cog.bot.get_channel = MagicMock(return_value=channel)
+
+    final = await cog.start_polls([42])
+
+    assert final is not None
+    assert len(final) == 1
+    assert observed and all(observed)
+    assert cog._rendering == set()
+
+
+async def test_start_polls_releases_render_guard_on_error():
+    cog = make_cog()
+
+    async def fetch_and_observe(poll_id):
+        assert 42 in cog._rendering
+        raise RuntimeError("boom")
+
+    cog.fetch_poll = AsyncMock(side_effect=fetch_and_observe)
+
+    with pytest.raises(RuntimeError):
+        await cog.start_polls([42])
+
+    assert cog._rendering == set()
+
+
+async def test_handle_poll_event_renders_pending_start():
+    cog = make_cog()
+    poll = cog.poll_dict(make_poll_model(message_id=None))
+    cog.fetch_poll = AsyncMock(return_value=poll)
+    cog.render_pending_poll = AsyncMock(return_value=True)
+    cog.update_poll_message = AsyncMock()
+
+    await cog.handle_poll_event(42)
+
+    cog.render_pending_poll.assert_awaited_once_with(42)
+    cog.update_poll_message.assert_not_awaited()
+
+
+async def test_handle_poll_event_finalizes_ended_poll():
+    cog = make_cog()
+    poll = cog.poll_dict(
+        make_poll_model(active=False, end_time=datetime(2026, 1, 5, 12, tzinfo=timezone.utc))
+    )
+    cog.fetch_poll = AsyncMock(return_value=poll)
+    cog.finalize_ended_poll = AsyncMock()
+    cog.update_poll_message = AsyncMock()
+
+    await cog.handle_poll_event(42)
+
+    cog.finalize_ended_poll.assert_awaited_once_with(poll)
+    cog.update_poll_message.assert_not_awaited()
+
+
+async def test_handle_poll_event_rerenders_running_poll():
+    cog = make_cog()
+    poll = cog.poll_dict(make_poll_model())
+    cog.fetch_poll = AsyncMock(return_value=poll)
+    cog.render_pending_poll = AsyncMock()
+    cog.finalize_ended_poll = AsyncMock()
+    cog.update_poll_message = AsyncMock()
+
+    await cog.handle_poll_event(42)
+
+    cog.update_poll_message.assert_awaited_once_with(poll)
+    cog.render_pending_poll.assert_not_awaited()
+    cog.finalize_ended_poll.assert_not_awaited()
+
+
+async def test_handle_poll_event_deleted_poll_is_a_no_op():
+    cog = make_cog()
+    cog.fetch_poll = AsyncMock(return_value=None)
+    cog.render_pending_poll = AsyncMock()
+    cog.finalize_ended_poll = AsyncMock()
+    cog.update_poll_message = AsyncMock()
+
+    await cog.handle_poll_event(42)
+
+    cog.render_pending_poll.assert_not_awaited()
+    cog.finalize_ended_poll.assert_not_awaited()
+    cog.update_poll_message.assert_not_awaited()
+
+
+async def test_handle_poll_event_skips_foreign_guild():
+    cog = make_cog()
+    cog.fetch_poll = AsyncMock(
+        return_value=cog.poll_dict(make_poll_model(guild_id=999))
+    )
+    cog.render_pending_poll = AsyncMock()
+    cog.update_poll_message = AsyncMock()
+
+    await cog.handle_poll_event(42)
+
+    cog.render_pending_poll.assert_not_awaited()
+    cog.update_poll_message.assert_not_awaited()
+
+
+async def test_end_poll_manual_writes_end_time_then_finalizes():
+    cog = make_cog()
+    poll = cog.poll_dict(make_poll_model())
+    cog.fetch_poll = AsyncMock(return_value=poll)
+    cog.finalize_ended_poll = AsyncMock()
+    cog.bot.polls_api.update_polls = AsyncMock()
+
+    await cog.end_poll(42, user_id=1)
+
+    body = cog.bot.polls_api.update_polls.call_args[0][0][0]
+    assert body["id"] == 42
+    assert "end_time" in body
+    cog.finalize_ended_poll.assert_awaited_once()
+
+
+async def test_end_poll_skips_inactive_poll():
+    cog = make_cog()
+    cog.fetch_poll = AsyncMock(
+        return_value=cog.poll_dict(make_poll_model(active=False))
+    )
+    cog.bot.polls_api.update_polls = AsyncMock()
+    cog.finalize_ended_poll = AsyncMock()
+
+    await cog.end_poll(42)
+
+    cog.bot.polls_api.update_polls.assert_not_awaited()
+    cog.finalize_ended_poll.assert_not_awaited()
+
+
+async def test_resync_runs_renders_ends_and_views():
+    cog = make_cog()
+    cog.process_pending_renders = AsyncMock()
+    cog.process_missed_ends = AsyncMock()
+    cog.on_startup_buttons = AsyncMock()
+    cog.on_startup_self_assign = AsyncMock()
+
+    await cog.resync_from_api()
+
+    cog.process_pending_renders.assert_awaited_once()
+    cog.process_missed_ends.assert_awaited_once()
+    cog.on_startup_buttons.assert_awaited_once()
+    cog.on_startup_self_assign.assert_awaited_once()
+
+
+def test_scheduler_machinery_is_gone():
+    cog = make_cog()
+    assert not hasattr(cog, "scheduler")
+    assert not hasattr(cog, "schedule_starts")
+    assert not hasattr(cog, "schedule_ends")
+    assert not hasattr(cog, "update_poll_scheduling")
+    assert "poll_schedules" not in cog.bot.tasks
