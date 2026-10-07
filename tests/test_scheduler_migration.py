@@ -167,3 +167,50 @@ async def test_start_polls_skips_in_flight_renders():
 
     assert result is None
     cog.fetch_poll.assert_not_awaited()
+
+
+def make_thread(thread_id=555, archived=False):
+    thread = MagicMock()
+    thread.id = thread_id
+    thread.edit = AsyncMock()
+    return thread
+
+
+async def test_finalize_ended_poll_archives_threads_and_rerenders():
+    cog = make_cog()
+    poll = cog.poll_dict(
+        make_poll_model(active=False, thread_question="Discuss!")
+    )
+    cog.fetch_tag = AsyncMock(return_value=None)
+    cog.fetch_guild_info = AsyncMock(
+        return_value={
+            "guild_id": 100,
+            "default_channel_id": 300,
+            "manage_channel_id": [301],
+            "manager_role_id": [302],
+            "default_colour": None,
+            "fallback_channel_id": 303,
+        }
+    )
+    channel = MagicMock()
+    channel.guild = MagicMock()
+    channel.guild.get_channel_or_thread = MagicMock(return_value=None)
+    cog.bot.get_channel = MagicMock(return_value=channel)
+    cog.bot.get_guild = MagicMock(return_value=MagicMock())
+    cog.update_poll_message = AsyncMock()
+
+    await cog.finalize_ended_poll(poll)
+
+    cog.update_poll_message.assert_awaited_once_with(poll)
+
+
+async def test_finalize_ended_poll_aborts_when_guild_fetch_fails():
+    cog = make_cog()
+    poll = cog.poll_dict(make_poll_model(active=False))
+    cog.fetch_tag = AsyncMock(return_value=None)
+    cog.fetch_guild_info = AsyncMock(return_value=None)
+    cog.update_poll_message = AsyncMock()
+
+    await cog.finalize_ended_poll(poll)
+
+    cog.update_poll_message.assert_not_awaited()

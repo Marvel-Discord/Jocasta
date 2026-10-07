@@ -1520,6 +1520,52 @@ class PollsCog(commands.Cog, name="Polls"):
         if poll is not None:
             await self.update_poll_message(poll)
 
+    async def finalize_ended_poll(self, poll: dict[str, Any]):
+        """Idempotent end-of-life Discord effects: archive + lock the
+        poll's threads (Discord's archived state is the marker — a
+        repeat call is a no-op) and re-render the final message."""
+        tag = await self.fetch_tag(poll["tag"])
+        guild = await self.fetch_guild_info(poll["guild_id"])
+        if guild is None:
+            self.listener_log(
+                f"finalize_ended_poll: guild fetch failed for poll {poll['id']}, aborting"
+            )
+            return
+
+        channel_id = guild["default_channel_id"]
+        if tag and tag["channel_id"]:
+            channel_id = tag["channel_id"]
+
+        channel = self.bot.get_channel(channel_id)
+        crossposts = (
+            [self.bot.get_channel(i) for i in tag["crosspost_channels"]]
+            if tag
+            else []
+        )
+        guilds = [
+            self.bot.get_guild(g)
+            for g in {i.guild.id for i in [channel] + crossposts}
+        ]
+
+        try:
+            if poll["thread_question"]:
+                for thread_id in [poll["message_id"]] + (
+                    poll["crosspost_message_ids"]
+                    if poll["crosspost_message_ids"]
+                    else []
+                ):
+                    for g in guilds:
+                        thread = g.get_channel_or_thread(thread_id)
+                        if thread is None:
+                            continue
+                        else:
+                            await thread.edit(archived=True, locked=True)
+                            break
+        except Exception:
+            traceback.print_exc()
+
+        await self.update_poll_message(poll)
+
     async def scheduler(
         self, polls: list[dict[str, Any]] | dict[str, Any], start: bool
     ):
