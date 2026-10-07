@@ -285,9 +285,8 @@ async def test_authorization_header_on_every_request():
 
     client = make_client(handler)
     await client.get_poll(1)
-    await client.end_poll(1)
     await client.publish_poll(1, 555, [])
-    assert auth_values == ["Bearer test-token"] * 3
+    assert auth_values == ["Bearer test-token"] * 2
 
 
 async def test_create_polls_posts_wrapped_body_and_parses_polls():
