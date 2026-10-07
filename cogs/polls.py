@@ -181,7 +181,8 @@ class PollsCog(commands.Cog, name="Polls"):
 
         self.bot.tree.on_error = self.on_app_command_error
 
-        self.bot.rendering_polls: set[int] = set()
+        if not hasattr(self.bot, "rendering_polls"):
+            self.bot.rendering_polls: set[int] = set()
         self._end_watermark_fallback: _dt.datetime | None = None
 
         self.bot.update_msg_lock = asyncio.Lock()
