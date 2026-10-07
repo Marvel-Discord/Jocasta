@@ -85,3 +85,85 @@ async def test_end_watermark_falls_back_to_memory_without_redis():
     await cog._set_end_watermark(stamp)
     assert cog._end_watermark_fallback == stamp
     assert await cog._get_end_watermark() == stamp
+
+
+async def test_render_pending_poll_renders_started_unrendered_poll():
+    cog = make_cog()
+    poll = cog.poll_dict(make_poll_model(message_id=None))
+    cog.fetch_poll = AsyncMock(return_value=poll)
+    cog.split_start_polls = AsyncMock(return_value=True)
+
+    assert await cog.render_pending_poll(42) is True
+    cog.split_start_polls.assert_awaited_once_with(42, natural=True)
+
+
+async def test_render_pending_poll_skips_already_rendered():
+    cog = make_cog()
+    cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(make_poll_model()))
+    cog.split_start_polls = AsyncMock(return_value=True)
+
+    assert await cog.render_pending_poll(42) is False
+    cog.split_start_polls.assert_not_awaited()
+
+
+async def test_render_pending_poll_skips_unpublished():
+    cog = make_cog()
+    poll = cog.poll_dict(make_poll_model(published=False, message_id=None))
+    cog.fetch_poll = AsyncMock(return_value=poll)
+    cog.split_start_polls = AsyncMock(return_value=True)
+
+    assert await cog.render_pending_poll(42) is False
+    cog.split_start_polls.assert_not_awaited()
+
+
+async def test_render_pending_poll_skips_missing_poll():
+    cog = make_cog()
+    cog.fetch_poll = AsyncMock(return_value=None)
+    cog.split_start_polls = AsyncMock(return_value=True)
+
+    assert await cog.render_pending_poll(42) is False
+    cog.split_start_polls.assert_not_awaited()
+
+
+async def test_process_pending_renders_queries_and_renders():
+    cog = make_cog()
+    cog.bot.polls_api.sync_all_polls = AsyncMock(
+        return_value=[make_poll_model(id=42, message_id=None)]
+    )
+    cog.render_pending_poll = AsyncMock(return_value=True)
+
+    await cog.process_pending_renders()
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(
+        100, pending_render=True
+    )
+    cog.render_pending_poll.assert_awaited_once_with(42)
+
+
+async def test_process_missed_ends_finalizes_and_advances_watermark():
+    cog = make_cog()
+    cog.bot.redis = FakeRedis()
+    ended = make_poll_model(active=False)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[ended])
+    cog.finalize_ended_poll = AsyncMock()
+    before = discord.utils.utcnow()
+
+    await cog.process_missed_ends()
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once()
+    kwargs = cog.bot.polls_api.sync_all_polls.call_args[1]
+    assert kwargs["ended_since"] is not None
+    cog.finalize_ended_poll.assert_awaited_once_with(cog.poll_dict(ended))
+    stored = await cog._get_end_watermark()
+    assert stored >= before
+
+
+async def test_start_polls_skips_in_flight_renders():
+    cog = make_cog()
+    cog._rendering.add(42)
+    cog.fetch_poll = AsyncMock()
+
+    result = await cog.start_polls([42])
+
+    assert result is None
+    cog.fetch_poll.assert_not_awaited()

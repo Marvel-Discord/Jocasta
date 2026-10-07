@@ -1176,6 +1176,39 @@ class PollsCog(commands.Cog, name="Polls"):
                 traceback.print_exc()
         self._end_watermark_fallback = value
 
+    async def process_pending_renders(self):
+        """Resync scan: render every poll the API has started but that
+        has no Discord message yet (message_id IS NULL server-side).
+        The set only shrinks as renders land, so this needs no
+        watermark."""
+        polls = await self.bot.polls_api.sync_all_polls(
+            self.polls_guild_id(), pending_render=True
+        )
+        for poll in polls:
+            await self.render_pending_poll(poll.id)
+
+    async def render_pending_poll(self, poll_id: int) -> bool:
+        poll = await self.fetch_poll(poll_id)
+        if poll is None or poll["guild_id"] != self.polls_guild_id():
+            return False
+        if not poll["published"] or poll["message_id"]:
+            return False
+        self.listener_log(f"Rendering pending poll {poll_id}")
+        return await self.split_start_polls(poll_id, natural=True)
+
+    async def process_missed_ends(self):
+        """Resync scan: run idempotent end-of-life effects for polls that
+        ended since the last successful pass, then advance the watermark.
+        Covers bot/API downtime of any length (the API sweep only
+        re-emits end frames for 24h)."""
+        watermark = await self._get_end_watermark()
+        polls = await self.bot.polls_api.sync_all_polls(
+            self.polls_guild_id(), ended_since=watermark.isoformat()
+        )
+        for poll in polls:
+            await self.finalize_ended_poll(self.poll_dict(poll))
+        await self._set_end_watermark(discord.utils.utcnow())
+
     async def update_poll_scheduling(self, poll: dict[str, Any]):
         """Update scheduling for a poll that may have changed timing"""
         try:
@@ -1246,159 +1279,170 @@ class PollsCog(commands.Cog, name="Polls"):
         if not isinstance(poll_ids, list):
             poll_ids = [poll_ids]
 
-        polls = []
-        for poll_id in poll_ids:
-            poll = await self.fetch_poll(poll_id)
+        # In-flight guard: a manual /polls start and a sweep-driven
+        # render can race (the API frame lands before the render report
+        # sets message_id). Skip ids already being rendered.
+        poll_ids = [i for i in poll_ids if i not in self._rendering]
+        if not poll_ids:
+            return None
+        self._rendering.update(poll_ids)
+        try:
+            polls = []
+            for poll_id in poll_ids:
+                poll = await self.fetch_poll(poll_id)
+                if poll is None:
+                    continue
+                tag = await self.fetch_tag(poll["tag"])
+                polls.append([poll, tag])
+
+            tags = [tag["tag"] if tag else None for poll, tag in polls]
+            if not tags.count(tags[0]) == len(tags):
+                print("Can't bulk-start polls with different tags!")
+                return None
+
+            poll, tag = polls[0]
             if poll is None:
-                continue
-            tag = await self.fetch_tag(poll["tag"])
-            polls.append([poll, tag])
+                return None
+            guild = await self.fetch_guild_info(poll["guild_id"])
+            channel_id = self.fetch_channel_id(guild, tag)
 
-        tags = [tag["tag"] if tag else None for poll, tag in polls]
-        if not tags.count(tags[0]) == len(tags):
-            print("Can't bulk-start polls with different tags!")
-            return None
+            msgs = [
+                [await self.format_poll_message(p), p]
+                for p in [i[0] for i in polls]
+                if p is not None
+            ]
+            final = []
 
-        poll, tag = polls[0]
-        if poll is None:
-            return None
-        guild = await self.fetch_guild_info(poll["guild_id"])
-        channel_id = self.fetch_channel_id(guild, tag)
-
-        msgs = [
-            [await self.format_poll_message(p), p]
-            for p in [i[0] for i in polls]
-            if p is not None
-        ]
-        final = []
-
-        channel = self.bot.get_channel(channel_id)
-        crossposts = (
-            [self.bot.get_channel(i) for i in tag["crosspost_channels"]] if tag else []
-        )
-
-        async def send(txt, poll, channel, *, main=True):
-            msg = await channel.send(**txt)
-
-            if poll["thread_question"]:
-                name = poll["question"]
-                if poll["num"]:
-                    name = f"{poll['num']} - {name}"
-                try:
-                    thread = await msg.create_thread(name=name)
-                    thread_question_message = self.default_thread_msg(poll["thread_question"])
-                    if not thread_question_message[0]:
-                        thread_message = await thread.send(thread_question_message[1])
-                        await thread_message.pin()
-                except Forbidden:
-                    pass
-
-            return msg
-
-        for txt, poll in msgs:
-            main_msg = await send(txt, poll, channel)
-            final.append([poll, main_msg])
-            crosspost_ids = []
-            for ch in crossposts:
-                crosspost_msg = await send(txt, poll, ch, main=False)
-                final.append([poll, crosspost_msg])
-                crosspost_ids.append(crosspost_msg.id)
-
-            await self.bot.polls_api.publish_poll(
-                poll["id"], main_msg.id, crosspost_ids
+            channel = self.bot.get_channel(channel_id)
+            crossposts = (
+                [self.bot.get_channel(i) for i in tag["crosspost_channels"]] if tag else []
             )
 
-        for poll, t in polls:
-            if poll is None:
-                continue
-            if poll["time"]:  # needs to be old time
-                await self.schedule_starts(
-                    timestamps=[poll["time"].timestamp()],
-                    natural=natural,
-                    tag=poll["tag"],
+            async def send(txt, poll, channel, *, main=True):
+                msg = await channel.send(**txt)
+
+                if poll["thread_question"]:
+                    name = poll["question"]
+                    if poll["num"]:
+                        name = f"{poll['num']} - {name}"
+                    try:
+                        thread = await msg.create_thread(name=name)
+                        thread_question_message = self.default_thread_msg(poll["thread_question"])
+                        if not thread_question_message[0]:
+                            thread_message = await thread.send(thread_question_message[1])
+                            await thread_message.pin()
+                    except Forbidden:
+                        pass
+
+                return msg
+
+            for txt, poll in msgs:
+                main_msg = await send(txt, poll, channel)
+                final.append([poll, main_msg])
+                crosspost_ids = []
+                for ch in crossposts:
+                    crosspost_msg = await send(txt, poll, ch, main=False)
+                    final.append([poll, crosspost_msg])
+                    crosspost_ids.append(crosspost_msg.id)
+
+                await self.bot.polls_api.publish_poll(
+                    poll["id"], main_msg.id, crosspost_ids
                 )
-            if poll["duration"]:
-                await self.schedule_ends(poll_ids=[poll["id"]], natural=natural)
 
-        if tag and tag["end_message"]:
-            txt: dict[str, Any] = {"content": None, "embed": None, "view": None}
+            for poll, t in polls:
+                if poll is None:
+                    continue
+                if poll["time"]:  # needs to be old time
+                    await self.schedule_starts(
+                        timestamps=[poll["time"].timestamp()],
+                        natural=natural,
+                        tag=poll["tag"],
+                    )
+                if poll["duration"]:
+                    await self.schedule_ends(poll_ids=[poll["id"]], natural=natural)
 
-            view = None
-            if tag["end_message_role_ids"] and tag["end_message_self_assign"]:
-                view = self.SelfAssignRoleView(tag["end_message_role_ids"])
+            if tag and tag["end_message"]:
+                txt: dict[str, Any] = {"content": None, "embed": None, "view": None}
 
-            txt["embed"] = discord.Embed(
-                description=tag["end_message"],
-                colour=await self.fetch_colour_by_id(
-                    guild["guild_id"] if guild else self.polls_guild_id(), tag["tag"]
-                ),
-            )
+                view = None
+                if tag["end_message_role_ids"] and tag["end_message_self_assign"]:
+                    view = self.SelfAssignRoleView(tag["end_message_role_ids"])
 
-            def get_roles(channel):
-                roles = []
-                for r in tag["end_message_role_ids"]:
-                    role = channel.guild.get_role(r)
-                    if role:
-                        roles.append(role)
-                return roles
+                txt["embed"] = discord.Embed(
+                    description=tag["end_message"],
+                    colour=await self.fetch_colour_by_id(
+                        guild["guild_id"] if guild else self.polls_guild_id(), tag["tag"]
+                    ),
+                )
 
-            roles = get_roles(channel)
-            txt["content"] = " ".join([r.mention for r in roles])
-            txt["view"] = view if roles else None
-            end_messages = [await channel.send(**txt)]
+                def get_roles(channel):
+                    roles = []
+                    for r in tag["end_message_role_ids"]:
+                        role = channel.guild.get_role(r)
+                        if role:
+                            roles.append(role)
+                    return roles
 
-            for ch in crossposts:
-                roles = get_roles(ch)
+                roles = get_roles(channel)
                 txt["content"] = " ".join([r.mention for r in roles])
                 txt["view"] = view if roles else None
-                end_messages.append(await ch.send(**txt))
+                end_messages = [await channel.send(**txt)]
 
-            end_message_tags = [tag]
-            if tag["end_message_replace"]:
-                all_tags = await self.fetch_all_tags(end_message_replace=True)
-                channels = [tag["channel_id"]] + tag["crosspost_channels"]
-                end_message_tags += [
-                    i
-                    for i in all_tags
-                    if (
-                        i["channel_id"] in channels
-                        or any(j in channels for j in i["crosspost_channels"])
-                    )
-                    and i["tag"] != tag["tag"]
-                ]
+                for ch in crossposts:
+                    roles = get_roles(ch)
+                    txt["content"] = " ".join([r.mention for r in roles])
+                    txt["view"] = view if roles else None
+                    end_messages.append(await ch.send(**txt))
 
-            for t in end_message_tags:
-                if t["end_message_latest_ids"]:
-                    latest = t["end_message_latest_ids"]
-                    change = False
-                    for message_id in latest:
-                        for ch in [channel] + crossposts:
-                            try:
-                                msg = await ch.fetch_message(message_id)
-                            except NotFound:
-                                continue
-                            else:
-                                await msg.delete()
-                                change = True
-                                latest.remove(message_id)
-                                break
-                    if change:
-                        await self.bot.polls_api.set_tag_end_message_latest_ids(
-                            t["tag"], latest
+                end_message_tags = [tag]
+                if tag["end_message_replace"]:
+                    all_tags = await self.fetch_all_tags(end_message_replace=True)
+                    channels = [tag["channel_id"]] + tag["crosspost_channels"]
+                    end_message_tags += [
+                        i
+                        for i in all_tags
+                        if (
+                            i["channel_id"] in channels
+                            or any(j in channels for j in i["crosspost_channels"])
                         )
+                        and i["tag"] != tag["tag"]
+                    ]
 
-            await self.bot.polls_api.set_tag_end_message_latest_ids(
-                tag["tag"], [m.id for m in end_messages]
-            )
+                for t in end_message_tags:
+                    if t["end_message_latest_ids"]:
+                        latest = t["end_message_latest_ids"]
+                        change = False
+                        for message_id in latest:
+                            for ch in [channel] + crossposts:
+                                try:
+                                    msg = await ch.fetch_message(message_id)
+                                except NotFound:
+                                    continue
+                                else:
+                                    await msg.delete()
+                                    change = True
+                                    latest.remove(message_id)
+                                    break
+                        if change:
+                            await self.bot.polls_api.set_tag_end_message_latest_ids(
+                                t["tag"], latest
+                            )
 
-        for poll, t in polls:
-            if poll is None:
-                continue
-            refreshed = await self.fetch_poll(poll["id"])
-            if refreshed is not None:
-                await self.update_poll_message(refreshed)
+                await self.bot.polls_api.set_tag_end_message_latest_ids(
+                    tag["tag"], [m.id for m in end_messages]
+                )
 
-        return final
+            for poll, t in polls:
+                if poll is None:
+                    continue
+                refreshed = await self.fetch_poll(poll["id"])
+                if refreshed is not None:
+                    await self.update_poll_message(refreshed)
+
+            return final
+        finally:
+            for i in poll_ids:
+                self._rendering.discard(i)
 
     async def end_poll(
         self,
