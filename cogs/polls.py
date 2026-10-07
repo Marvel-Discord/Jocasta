@@ -181,7 +181,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         self.bot.tree.on_error = self.on_app_command_error
 
-        self._rendering: set[int] = set()
+        self.bot.rendering_polls: set[int] = set()
         self._end_watermark_fallback: _dt.datetime | None = None
 
         self.bot.update_msg_lock = asyncio.Lock()
@@ -1096,6 +1096,18 @@ class PollsCog(commands.Cog, name="Polls"):
         if database_listener_logs:
             print(f"[Polls Listener] {msg}")
 
+    def poll_needs_render(self, poll: dict[str, Any]) -> bool:
+        """Started (start_time passed) but not yet rendered. Timestamp-
+        based, NOT published-based: the API's `published` column is only
+        set together with message_id (stage A), so `published ∧ no
+        message_id` never occurs — derived published (stage C) ≡ started,
+        making this predicate correct in both worlds."""
+        return (
+            poll["start_time"] is not None
+            and poll["start_time"] <= discord.utils.utcnow()
+            and not poll["message_id"]
+        )
+
     async def handle_poll_event(self, poll_id: int):
         """Unified WS event handler: debounce-collapsed fetch-and-reconcile.
 
@@ -1105,7 +1117,8 @@ class PollsCog(commands.Cog, name="Polls"):
         different kinds arrive inside one window:
           - deleted → nothing to do
           - foreign guild → ignore
-          - started but unrendered (published, no message_id) → render
+          - started but unrendered (start_time passed, no message_id)
+            → render
           - ended and rendered → idempotent end-of-life effects
           - otherwise → re-render
         """
@@ -1118,7 +1131,7 @@ class PollsCog(commands.Cog, name="Polls"):
             if poll["guild_id"] != self.polls_guild_id():
                 return
 
-            if poll["published"] and not poll["message_id"]:
+            if self.poll_needs_render(poll):
                 await self.render_pending_poll(poll_id)
                 return
 
@@ -1195,10 +1208,19 @@ class PollsCog(commands.Cog, name="Polls"):
         poll = await self.fetch_poll(poll_id)
         if poll is None or poll["guild_id"] != self.polls_guild_id():
             return False
-        if not poll["published"] or poll["message_id"]:
+        if not self.poll_needs_render(poll):
             return False
         self.listener_log(f"Rendering pending poll {poll_id}")
-        return await self.split_start_polls(poll_id, natural=True)
+        rendered = await self.split_start_polls(poll_id, natural=True)
+        if rendered:
+            refetched = await self.fetch_poll(poll_id)
+            if (
+                refetched is not None
+                and refetched["end_time"] is not None
+                and refetched["end_time"] <= discord.utils.utcnow()
+            ):
+                await self.finalize_ended_poll(refetched)
+        return rendered
 
     async def process_missed_ends(self):
         """Resync scan: run idempotent end-of-life effects for polls that
@@ -1206,12 +1228,13 @@ class PollsCog(commands.Cog, name="Polls"):
         Covers bot/API downtime of any length (the API sweep only
         re-emits end frames for 24h)."""
         watermark = await self._get_end_watermark()
+        now = discord.utils.utcnow()
         polls = await self.bot.polls_api.sync_all_polls(
             self.polls_guild_id(), ended_since=watermark.isoformat()
         )
         for poll in polls:
             await self.finalize_ended_poll(self.poll_dict(poll))
-        await self._set_end_watermark(discord.utils.utcnow())
+        await self._set_end_watermark(now)
 
     async def _stop_ws_listener(self):
         self.poll_ws_task.cancel()
@@ -1258,10 +1281,10 @@ class PollsCog(commands.Cog, name="Polls"):
         # In-flight guard: a manual /polls start and a sweep-driven
         # render can race (the API frame lands before the render report
         # sets message_id). Skip ids already being rendered.
-        poll_ids = [i for i in poll_ids if i not in self._rendering]
+        poll_ids = [i for i in poll_ids if i not in self.bot.rendering_polls]
         if not poll_ids:
             return None
-        self._rendering.update(poll_ids)
+        self.bot.rendering_polls.update(poll_ids)
         try:
             polls = []
             for poll_id in poll_ids:
@@ -1406,7 +1429,7 @@ class PollsCog(commands.Cog, name="Polls"):
             return final
         finally:
             for i in poll_ids:
-                self._rendering.discard(i)
+                self.bot.rendering_polls.discard(i)
 
     async def end_poll(self, poll_id: int, *, user_id: int | None = None):
         """Manual end (/polls end): stamp end_time = now via the update
