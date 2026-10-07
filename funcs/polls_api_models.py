@@ -12,7 +12,6 @@ class Poll(BaseModel):
     choices: list[str]
     votes: list[int]
     total_votes: int
-    time: datetime | None
     start_time: datetime | None
     end_time: datetime | None
     num: int | None

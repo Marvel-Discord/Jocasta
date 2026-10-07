@@ -581,10 +581,10 @@ class PollsCog(commands.Cog, name="Polls"):
         if poll["tag"] and tag:
             embed.add_field(name="Tag", value=f"`{tag['name']}`")
 
-        if poll["time"]:
+        if poll["start_time"]:
             embed.add_field(
                 name="Publish Date",
-                value=f"<t:{int(poll['time'].timestamp())}:F> (`{int(poll['time'].timestamp())}`)",
+                value=f"<t:{int(poll['start_time'].timestamp())}:F> (`{int(poll['start_time'].timestamp())}`)",
             )
         if poll["duration"]:
             embed.add_field(
@@ -718,7 +718,7 @@ class PollsCog(commands.Cog, name="Polls"):
         name = None
         value = None
         if poll["duration"] and poll["published"] and not poll["persistent"]:
-            end_time = poll["time"] + poll["duration"]
+            end_time = poll["start_time"] + poll["duration"]
             if poll["active"]:
                 name = "Poll ends"
             else:
@@ -875,10 +875,10 @@ class PollsCog(commands.Cog, name="Polls"):
         if sort == self.Sort.poll_id:
             key = lambda x: x["id"]
         elif sort == self.Sort.newest:
-            key = lambda x: x["time"].timestamp() * -1 if x["time"] else 1
+            key = lambda x: x["start_time"].timestamp() * -1 if x["start_time"] else 1
         elif sort == self.Sort.oldest:
             key = lambda x: (
-                x["time"].timestamp() if x["time"] else 99999999999999999999999999999999
+                x["start_time"].timestamp() if x["start_time"] else 99999999999999999999999999999999
             )
         elif sort == self.Sort.most_votes:
             key = lambda x: sum(x["votes"]) * -1 if x["votes"] else 1
@@ -1752,7 +1752,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     async def on_startup_buttons(self):
         polls = await self.fetch_all_polls()
-        polls.sort(key=lambda x: discord.utils.utcnow() - x["time"])
+        polls.sort(key=lambda x: discord.utils.utcnow() - x["start_time"])
         polls.sort(key=lambda x: not x["active"])
 
         for poll in polls:
@@ -2717,12 +2717,12 @@ class PollsCog(commands.Cog, name="Polls"):
                     f"This poll has already been published, therefore the start time cannot be rescheduled."
                 )
             else:
-                # schedule_time = poll['time'].timestamp()
+                # schedule_time = poll['start_time'].timestamp()
                 schedule_ts = current.timestamp()
 
         if not schedule_ts and not poll["published"]:
-            if poll["time"]:
-                schedule_ts = poll["time"].timestamp()
+            if poll["start_time"]:
+                schedule_ts = poll["start_time"].timestamp()
 
         scheduled: _dt.datetime | None = None
         if clear_schedule:
@@ -2756,7 +2756,7 @@ class PollsCog(commands.Cog, name="Polls"):
                     "You can't set an end time without a start time!"
                 )
 
-        if not poll["published"] and (schedule_ts != poll["time"] or clear_schedule):
+        if not poll["published"] and (schedule_ts != poll["start_time"] or clear_schedule):
             await self.bot.polls_api.update_polls(
                 [
                     {
@@ -2773,7 +2773,7 @@ class PollsCog(commands.Cog, name="Polls"):
             duration
             and duration != -1
             and poll["published"] is False
-            and not poll["time"]
+            and not poll["start_time"]
         ):
             return await interaction.followup.send(
                 "You can't set an end time without a start time!"
@@ -2785,7 +2785,7 @@ class PollsCog(commands.Cog, name="Polls"):
             elif poll["published"]:
                 end = discord.utils.utcnow() + _dt.timedelta(seconds=duration)
             else:
-                end = poll["time"] + _dt.timedelta(seconds=duration)
+                end = poll["start_time"] + _dt.timedelta(seconds=duration)
             await self.bot.polls_api.update_polls(
                 [
                     {
@@ -2817,16 +2817,16 @@ class PollsCog(commands.Cog, name="Polls"):
         embed.add_field(
             name="Start time",
             value=(
-                f"<t:{int(poll['time'].timestamp())}:F>\n`{int(poll['time'].timestamp())}`"
-                if poll["time"]
+                f"<t:{int(poll['start_time'].timestamp())}:F>\n`{int(poll['start_time'].timestamp())}`"
+                if poll["start_time"]
                 else "No time scheduled."
             ),
         )
         embed.add_field(
             name="End time",
             value=(
-                f"<t:{int((poll['time'] + poll['duration']).timestamp())}:F> - lasts {self.format_duration(poll['duration'])}\n`{int(poll['duration'].total_seconds())}`"
-                if poll["time"] and poll["duration"]
+                f"<t:{int((poll['start_time'] + poll['duration']).timestamp())}:F> - lasts {self.format_duration(poll['duration'])}\n`{int(poll['duration'].total_seconds())}`"
+                if poll["start_time"] and poll["duration"]
                 else (
                     f"Lasts {poll['duration']}\n`{int(poll['duration'].total_seconds())}`"
                     if poll["duration"]
@@ -2849,7 +2849,7 @@ class PollsCog(commands.Cog, name="Polls"):
         ]
 
         results.sort(
-            key=lambda x: x["time"].timestamp() if x["time"] is not None else -1
+            key=lambda x: x["start_time"].timestamp() if x["start_time"] is not None else -1
         )
         results.sort(key=lambda x: x["published"])
 
@@ -2857,7 +2857,7 @@ class PollsCog(commands.Cog, name="Polls"):
             app_commands.Choice(
                 name=self.truncate(
                     f"[{i['id']}] {i['question']}",
-                    f"{'{published}' if i['published'] else ('{scheduled}' if i['time'] else '')}",
+                    f"{'{published}' if i['published'] else ('{scheduled}' if i['start_time'] else '')}",
                 ),
                 value=i["id"],
             )
@@ -3150,9 +3150,9 @@ class PollsCog(commands.Cog, name="Polls"):
                         if poll["num"]:
                             string_builder.append(f" (`#{poll['num']}`)")
                         string_builder.append(f": {poll['question']}")
-                        if poll["time"]:
+                        if poll["start_time"]:
                             string_builder.append(
-                                f" (<t:{int(poll['time'].timestamp())}:d>)"
+                                f" (<t:{int(poll['start_time'].timestamp())}:d>)"
                             )
                         return "".join(string_builder)
 
@@ -3577,7 +3577,7 @@ class PollsCog(commands.Cog, name="Polls"):
             filtered = [i for i in polls if i[poll_filter]]
             if tag:
                 filtered = [i for i in polls if i["tag"] == tag]
-            filtered.sort(key=lambda x: discord.utils.utcnow() - x["time"])
+            filtered.sort(key=lambda x: discord.utils.utcnow() - x["start_time"])
             filtered.sort(key=lambda x: not x["active"])
             for poll in filtered:
                 await self.do_update_poll_message(poll, force=poll["active"])

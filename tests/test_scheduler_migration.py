@@ -34,7 +34,6 @@ def make_poll_model(**overrides):
         "choices": ["A", "B"],
         "votes": [3, 1],
         "total_votes": 4,
-        "time": datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
         "start_time": datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
         "end_time": datetime(2026, 1, 5, 12, tzinfo=timezone.utc),
         "num": 7,

@@ -42,7 +42,6 @@ def make_poll_model(**overrides):
         "choices": ["A", "B"],
         "votes": [3, 1],
         "total_votes": 4,
-        "time": datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
         "start_time": datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
         "end_time": datetime(2026, 1, 5, 12, tzinfo=timezone.utc),
         "num": 7,
@@ -98,7 +97,7 @@ def make_guild_dict(**overrides):
 
 async def test_poll_schedule_writes_start_time_via_update_polls():
     cog = make_cog()
-    poll = make_poll_model(published=False, start_time=None, end_time=None, time=None)
+    poll = make_poll_model(published=False, start_time=None, end_time=None)
     cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(poll))
     cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
     cog.fetch_colour_by_id = AsyncMock(return_value=1)
@@ -144,7 +143,6 @@ async def test_poll_schedule_duration_computes_end_time():
     cog = make_cog()
     poll = make_poll_model(
         published=False,
-        time=datetime(2030, 1, 1, tzinfo=timezone.utc),
         start_time=datetime(2030, 1, 1, tzinfo=timezone.utc),
     )
     cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(poll))
@@ -194,7 +192,6 @@ async def test_poll_schedule_duration_clear_sends_null_end_time():
     cog = make_cog()
     poll = make_poll_model(
         published=False,
-        time=datetime(2030, 1, 1, tzinfo=timezone.utc),
         start_time=datetime(2030, 1, 1, tzinfo=timezone.utc),
     )
     cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(poll))
@@ -394,7 +391,7 @@ async def test_poll_start_with_duration_includes_end_time():
 
 async def test_poll_schedule_duration_without_start_time_is_rejected():
     cog = make_cog()
-    poll = make_poll_model(published=False, start_time=None, end_time=None, time=None)
+    poll = make_poll_model(published=False, start_time=None, end_time=None)
     cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(poll))
     cog.has_manager_perms_by_user_and_ids = AsyncMock(return_value=[100])
     cog.bot.polls_api.update_polls = AsyncMock()

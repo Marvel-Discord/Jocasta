@@ -20,7 +20,6 @@ def poll_payload(**overrides) -> dict:
         "choices": ["Iron Man", "Captain America"],
         "votes": [3, 2],
         "total_votes": 5,
-        "time": None,
         "start_time": "2026-01-01T12:00:00Z",
         "end_time": None,
         "num": 7,
