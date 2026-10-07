@@ -173,6 +173,9 @@ def valid_guild_only():
 class PollsCog(commands.Cog, name="Polls"):
     """Polls commands"""
 
+    END_WATERMARK_KEY = "polls:end_watermark"
+    END_WATERMARK_DEFAULT_SECONDS = 24 * 60 * 60
+
     def __init__(self, bot):
         self.bot = bot
 
@@ -182,6 +185,9 @@ class PollsCog(commands.Cog, name="Polls"):
             "starts": {},
             "ends": {},
         }
+
+        self._rendering: set[int] = set()
+        self._end_watermark_fallback: _dt.datetime | None = None
 
         self.bot.update_msg_lock = asyncio.Lock()
         self.bot.update_msg_flags = {}
@@ -1140,6 +1146,35 @@ class PollsCog(commands.Cog, name="Polls"):
         except Exception:
             traceback.print_exc()
             self.listener_log("Resync failed — will retry on next WS reconnect")
+
+    async def _get_end_watermark(self) -> _dt.datetime:
+        """Lower bound for missed-end reconciliation. Persisted in Redis
+        so bot restarts don't widen the scan; falls back to an in-memory
+        value (and then the lookback default) when Redis is unavailable."""
+        default = discord.utils.utcnow() - _dt.timedelta(
+            seconds=self.END_WATERMARK_DEFAULT_SECONDS
+        )
+        redis = getattr(self.bot, "redis", None)
+        if redis is not None:
+            try:
+                stored = await redis.get(self.END_WATERMARK_KEY)
+                if stored:
+                    return _dt.datetime.fromisoformat(stored)
+            except Exception:
+                traceback.print_exc()
+        elif self._end_watermark_fallback is not None:
+            return self._end_watermark_fallback
+        return default
+
+    async def _set_end_watermark(self, value: _dt.datetime):
+        redis = getattr(self.bot, "redis", None)
+        if redis is not None:
+            try:
+                await redis.set(self.END_WATERMARK_KEY, value.isoformat())
+                return
+            except Exception:
+                traceback.print_exc()
+        self._end_watermark_fallback = value
 
     async def update_poll_scheduling(self, poll: dict[str, Any]):
         """Update scheduling for a poll that may have changed timing"""
