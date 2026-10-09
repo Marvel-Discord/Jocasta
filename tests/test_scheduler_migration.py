@@ -102,7 +102,7 @@ async def test_render_pending_poll_renders_started_unrendered_poll():
     cog.finalize_ended_poll = AsyncMock()
 
     assert await cog.render_pending_poll(42) is True
-    cog.split_start_polls.assert_awaited_once_with(42, natural=True)
+    cog.split_start_polls.assert_awaited_once_with(42)
     cog.finalize_ended_poll.assert_not_awaited()
 
 

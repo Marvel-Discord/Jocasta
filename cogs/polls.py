@@ -1212,7 +1212,7 @@ class PollsCog(commands.Cog, name="Polls"):
         if not self.poll_needs_render(poll):
             return False
         self.listener_log(f"Rendering pending poll {poll_id}")
-        rendered = await self.split_start_polls(poll_id, natural=True)
+        rendered = await self.split_start_polls(poll_id)
         if rendered:
             refetched = await self.fetch_poll(poll_id)
             if (
@@ -1247,7 +1247,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     # other stuff i haven't categorised yet #
 
-    async def split_start_polls(self, poll_ids, *, natural: bool = False) -> bool:
+    async def split_start_polls(self, poll_ids) -> bool:
         if not isinstance(poll_ids, list):
             poll_ids = [poll_ids]
 
@@ -1267,13 +1267,13 @@ class PollsCog(commands.Cog, name="Polls"):
             return False
 
         for t, p in polls.items():
-            await self.start_polls(p, natural=natural)
+            await self.start_polls(p)
         return True
 
     async def start_poll(self, poll_id: int, **kwargs):
         return await self.start_polls([poll_id], **kwargs)
 
-    async def start_polls(self, poll_ids: list, *, natural: bool = False):
+    async def start_polls(self, poll_ids: list):
         await self.bot.wait_until_ready()
 
         if not isinstance(poll_ids, list):
@@ -3555,8 +3555,8 @@ class PollsCog(commands.Cog, name="Polls"):
         tasks = {
             k: {"txt": v, "status": False}
             for k, v in {
-                "start_schedule": "Start schedules",
-                "end_schedule": "End schedules",
+                "pending_renders": "Pending renders",
+                "missed_ends": "Missed ends",
                 "update_msg": "Update poll messages",
                 "update_self_assign": "Update self-assign buttons",
             }.items()
@@ -3592,9 +3592,9 @@ class PollsCog(commands.Cog, name="Polls"):
         refresh_polls = lambda: self.search_polls_by_keyword("")
         polls = await refresh_polls()
 
-        await task(self.process_pending_renders, "start_schedule")
+        await task(self.process_pending_renders, "pending_renders")
 
-        await task(self.process_missed_ends, "end_schedule")
+        await task(self.process_missed_ends, "missed_ends")
 
         async def update_msg():
             poll_filter = "published" if include_ended else "active"
