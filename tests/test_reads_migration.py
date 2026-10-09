@@ -36,7 +36,6 @@ def make_poll_model(**overrides):
         "choices": ["A", "B"],
         "votes": [3, 1],
         "total_votes": 4,
-        "time": datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
         "start_time": datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
         "end_time": datetime(2026, 1, 5, 12, tzinfo=timezone.utc),
         "num": 7,
@@ -98,14 +97,14 @@ async def test_poll_dict_synthesizes_duration_and_merges_tag_guild():
     assert d["persistent"] is False
     assert d["default_channel_id"] == 300
     assert d["fallback_channel_id"] == 303
-    assert d["time"] == datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+    assert d["start_time"] == datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
     assert d["votes"] == [3, 1]
     assert d["active"] is True
 
 
 async def test_poll_dict_missing_times_gives_none_duration():
     cog = make_cog()
-    d = cog.poll_dict(make_poll_model(start_time=None, end_time=None, time=None))
+    d = cog.poll_dict(make_poll_model(start_time=None, end_time=None))
     assert d["duration"] is None
 
 
@@ -255,7 +254,7 @@ async def test_has_manager_perms_by_user_and_ids_uses_guild_settings_arrays():
 async def test_on_startup_buttons_uses_composed_fetch():
     cog = make_cog()
     cog.fetch_all_polls = AsyncMock(
-        return_value=[{"id": 1, "time": datetime(2026, 1, 1, tzinfo=timezone.utc), "active": True, "persistent": False, "published": True}]
+        return_value=[{"id": 1, "start_time": datetime(2026, 1, 1, tzinfo=timezone.utc), "active": True, "persistent": False, "published": True}]
     )
     cog.poll_buttons = AsyncMock()
     cog.bot.add_view = MagicMock()
@@ -357,8 +356,8 @@ async def test_polls_me_no_votes_makes_no_wasted_fetches():
 async def test_admin_sync_skips_update_votes_task():
     cog = make_cog()
     cog.fetch_all_polls = AsyncMock(return_value=[])
-    cog.schedule_starts = AsyncMock()
-    cog.schedule_ends = AsyncMock()
+    cog.process_pending_renders = AsyncMock()
+    cog.process_missed_ends = AsyncMock()
     cog.on_startup_self_assign = AsyncMock()
     cog.do_update_poll_message = AsyncMock()
 
@@ -370,6 +369,6 @@ async def test_admin_sync_skips_update_votes_task():
 
     await cog.poll_admin_sync(interaction)
     cog.fetch_all_polls.assert_awaited_once_with(show_unpublished=False)
-    cog.schedule_starts.assert_awaited_once()
-    cog.schedule_ends.assert_awaited_once()
+    cog.process_pending_renders.assert_awaited_once()
+    cog.process_missed_ends.assert_awaited_once()
     cog.on_startup_self_assign.assert_awaited_once()

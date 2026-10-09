@@ -11,7 +11,7 @@ from tests.conftest import unwrap_command
 def make_cog():
     class FakeBot:
         def __init__(self):
-            self.tasks = {"poll_schedules": {"starts": {}, "ends": {}}}
+            self.tasks = {}
             self.tree = MagicMock()
             self.loop = MagicMock()
             self.loop.create_task.side_effect = lambda coro: coro.close()
@@ -42,7 +42,6 @@ def make_poll_model(**overrides):
         "choices": ["A", "B"],
         "votes": [3, 1],
         "total_votes": 4,
-        "time": datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
         "start_time": datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
         "end_time": datetime(2026, 1, 5, 12, tzinfo=timezone.utc),
         "num": 7,
@@ -105,67 +104,74 @@ def make_channel(channel_id=300, msg_id=5555):
     return channel
 
 
-async def test_handle_poll_event_deleted_poll_cancels_timers():
+async def test_handle_poll_event_deleted_poll_is_a_clean_no_op():
     cog = make_cog()
     cog.fetch_poll = AsyncMock(return_value=None)
-    task = MagicMock()
-    cog.bot.tasks["poll_schedules"]["ends"][42] = task
+    cog.render_pending_poll = AsyncMock()
+    cog.finalize_ended_poll = AsyncMock()
+    cog.update_poll_message = AsyncMock()
 
     await cog.handle_poll_event(42)
 
-    task.cancel.assert_called_once()
-    assert 42 not in cog.bot.tasks["poll_schedules"]["ends"]
+    cog.render_pending_poll.assert_not_awaited()
+    cog.finalize_ended_poll.assert_not_awaited()
+    cog.update_poll_message.assert_not_awaited()
 
 
-async def test_handle_poll_event_published_poll_rerenders_and_reschedules():
+async def test_handle_poll_event_published_poll_rerenders():
     cog = make_cog()
     poll_dict = cog.poll_dict(make_poll_model(published=True))
     cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.render_pending_poll = AsyncMock()
+    cog.finalize_ended_poll = AsyncMock()
     cog.update_poll_message = AsyncMock()
-    cog.update_poll_scheduling = AsyncMock()
 
     await cog.handle_poll_event(42)
 
     cog.update_poll_message.assert_awaited_once_with(poll_dict)
-    cog.update_poll_scheduling.assert_awaited_once_with(poll_dict)
+    cog.render_pending_poll.assert_not_awaited()
+    cog.finalize_ended_poll.assert_not_awaited()
 
 
-async def test_handle_poll_event_unpublished_poll_only_reschedules():
+async def test_handle_poll_event_unpublished_poll_is_a_no_op():
     cog = make_cog()
-    poll_dict = cog.poll_dict(make_poll_model(published=False))
-    cog.fetch_poll = AsyncMock(return_value=poll_dict)
+    cog.fetch_poll = AsyncMock(
+        return_value=cog.poll_dict(make_poll_model(published=False))
+    )
+    cog.render_pending_poll = AsyncMock()
+    cog.finalize_ended_poll = AsyncMock()
     cog.update_poll_message = AsyncMock()
-    cog.update_poll_scheduling = AsyncMock()
 
     await cog.handle_poll_event(42)
 
+    cog.render_pending_poll.assert_not_awaited()
+    cog.finalize_ended_poll.assert_not_awaited()
     cog.update_poll_message.assert_not_awaited()
-    cog.update_poll_scheduling.assert_awaited_once_with(poll_dict)
 
 
 async def test_handle_poll_event_skips_foreign_guild():
     cog = make_cog()
     cog.fetch_poll = AsyncMock(return_value=cog.poll_dict(make_poll_model(guild_id=999)))
+    cog.render_pending_poll = AsyncMock()
     cog.update_poll_message = AsyncMock()
-    cog.update_poll_scheduling = AsyncMock()
 
     await cog.handle_poll_event(42)
 
+    cog.render_pending_poll.assert_not_awaited()
     cog.update_poll_message.assert_not_awaited()
-    cog.update_poll_scheduling.assert_not_awaited()
 
 
 async def test_resync_from_api_runs_the_four_tasks():
     cog = make_cog()
-    cog.schedule_starts = AsyncMock()
-    cog.schedule_ends = AsyncMock()
+    cog.process_pending_renders = AsyncMock()
+    cog.process_missed_ends = AsyncMock()
     cog.on_startup_buttons = AsyncMock()
     cog.on_startup_self_assign = AsyncMock()
 
     await cog.resync_from_api()
 
-    cog.schedule_starts.assert_awaited_once()
-    cog.schedule_ends.assert_awaited_once()
+    cog.process_pending_renders.assert_awaited_once()
+    cog.process_missed_ends.assert_awaited_once()
     cog.on_startup_buttons.assert_awaited_once()
     cog.on_startup_self_assign.assert_awaited_once()
 
@@ -173,10 +179,10 @@ async def test_resync_from_api_runs_the_four_tasks():
 async def test_resync_from_api_routes_the_four_tasks_through_gather(monkeypatch):
     cog = make_cog()
 
-    async def schedule_starts(*, tag=0, timestamps=[], natural=False):
+    async def process_pending_renders():
         pass
 
-    async def schedule_ends(*, poll_ids: list = [], natural=False):
+    async def process_missed_ends():
         pass
 
     async def on_startup_buttons():
@@ -185,8 +191,8 @@ async def test_resync_from_api_routes_the_four_tasks_through_gather(monkeypatch)
     async def on_startup_self_assign():
         pass
 
-    cog.schedule_starts = schedule_starts
-    cog.schedule_ends = schedule_ends
+    cog.process_pending_renders = process_pending_renders
+    cog.process_missed_ends = process_missed_ends
     cog.on_startup_buttons = on_startup_buttons
     cog.on_startup_self_assign = on_startup_self_assign
 
@@ -202,8 +208,8 @@ async def test_resync_from_api_routes_the_four_tasks_through_gather(monkeypatch)
     await cog.resync_from_api()
 
     assert routed == [
-        "schedule_starts",
-        "schedule_ends",
+        "process_pending_renders",
+        "process_missed_ends",
         "on_startup_buttons",
         "on_startup_self_assign",
     ]

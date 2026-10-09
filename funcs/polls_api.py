@@ -39,14 +39,13 @@ class Op(StrEnum):
     UPDATE_BY_TAG = auto()
     SET_TAG_END_MESSAGE_LATEST_IDS = auto()
     PUBLISH_POLL = auto()
-    END_POLL = auto()
     CROSSPOST_POLL = auto()
 
 
 RETRY_SAFE = frozenset({
     Op.GET_POLL, Op.LIST_POLLS, Op.SYNC_POLLS, Op.GET_TAGS, Op.GET_TAG,
     Op.GET_GUILD, Op.GET_GUILD_CHANNELS, Op.GET_GUILD_ROLES, Op.GET_USER_VOTES,
-    Op.CAST_VOTE, Op.PUBLISH_POLL, Op.END_POLL,
+    Op.CAST_VOTE, Op.PUBLISH_POLL,
     Op.UPDATE_POLLS, Op.DELETE_POLLS, Op.UPDATE_BY_TAG,
     Op.SET_TAG_END_MESSAGE_LATEST_IDS,
 })
@@ -235,10 +234,6 @@ class PollsAPIClient:
             Op.PUBLISH_POLL,
             json={"message_id": str(message_id), "crosspost_message_ids": [str(i) for i in crosspost_ids]},
         )
-        return Poll.model_validate(response.json())
-
-    async def end_poll(self, poll_id: int) -> Poll:
-        response = await self._request("POST", f"/bot/polls/{poll_id}/end", Op.END_POLL)
         return Poll.model_validate(response.json())
 
     async def crosspost_poll(self, poll_id: int, message_id: int) -> Poll:

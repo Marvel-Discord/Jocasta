@@ -138,14 +138,6 @@ class OwnerCog(commands.Cog, name="Owner"):
         if name == 'cogs.comics':
             await canceller(self, 'releases')
 
-        if name == 'cogs.polls':
-            for x in ['starts', 'ends']:
-                 for k, v in self.bot.tasks['poll_schedules'][x].items():
-                     try:
-                         v.cancel()
-                     except Exception:
-                         pass
-
 
 async def setup(bot):
     await bot.add_cog(OwnerCog(bot))

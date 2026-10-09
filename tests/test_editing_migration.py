@@ -11,7 +11,7 @@ from tests.conftest import unwrap_command
 def make_cog():
     class FakeBot:
         def __init__(self):
-            self.tasks = {"poll_schedules": {"starts": {}, "ends": {}}}
+            self.tasks = {}
             self.tree = MagicMock()
             self.loop = MagicMock()
             self.loop.create_task.side_effect = lambda coro: coro.close()
@@ -42,7 +42,6 @@ def make_poll_model(**overrides):
         "choices": ["A", "B"],
         "votes": [3, 1],
         "total_votes": 4,
-        "time": datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
         "start_time": datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
         "end_time": datetime(2026, 1, 5, 12, tzinfo=timezone.utc),
         "num": 7,
