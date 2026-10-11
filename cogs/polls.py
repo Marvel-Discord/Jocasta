@@ -1874,8 +1874,6 @@ class PollsCog(commands.Cog, name="Polls"):
         poll["votes"] = counts.votes
         poll["total_votes"] = counts.total_votes
 
-        await self.update_poll_message(poll)
-
         logger.debug(
             "vote on poll {} by user {} choice {} - total {} votes",
             poll["id"],
@@ -1883,6 +1881,8 @@ class PollsCog(commands.Cog, name="Polls"):
             choice,
             poll["total_votes"],
         )
+
+        await self.update_poll_message(poll)
         return choice
 
     async def get_user_vote(self, poll: dict[str, Any], user) -> int | None:
@@ -2230,7 +2230,7 @@ class PollsCog(commands.Cog, name="Polls"):
         ]
 
         logger.info(
-            "poll create by user {}: {} polls", interaction.user.id, len(choices)
+            "poll create by user {}: {} choices", interaction.user.id, len(choices)
         )
 
         image_value: str | Attachment | None = image
