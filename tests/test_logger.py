@@ -7,9 +7,9 @@ from funcs.logger import InterceptHandler
 
 
 def test_intercept_handler_routes_stdlib_into_loguru():
-    messages: list[tuple[str, str]] = []
+    records: list[dict] = []
     sink_id = logger.add(
-        lambda msg: messages.append((msg.record["level"].name, str(msg.record["message"]))),
+        lambda msg: records.append(msg.record),
         level="DEBUG",
     )
     try:
@@ -26,7 +26,12 @@ def test_intercept_handler_routes_stdlib_into_loguru():
     finally:
         logger.remove(sink_id)
 
-    assert ("DEBUG", "shard connected to session-1") in messages
+    match = next(r for r in records if "shard connected" in str(r["message"]))
+    assert match["level"].name == "DEBUG"
+    assert str(match["message"]) == "shard connected to session-1"
+    # Attribution: the record must point at THIS test's call site, not at
+    # InterceptHandler.emit (the frame-walk must not be dead code).
+    assert match["function"] == "test_intercept_handler_routes_stdlib_into_loguru"
 
 
 def test_intercept_handler_maps_warning_level():

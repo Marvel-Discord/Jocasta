@@ -4,6 +4,7 @@ Import once from main.py (before cogs load). Third-party stdlib loggers are
 capped at INFO so LOG_LEVEL=DEBUG means OUR detail, not discord.py's
 per-request firehose.
 """
+import inspect
 import logging
 import os
 import sys
@@ -37,7 +38,7 @@ class InterceptHandler(logging.Handler):
         except ValueError:
             level = record.levelno
 
-        frame, depth = None, 0
+        frame, depth = inspect.currentframe(), 0
         while frame and (depth == 0 or frame.f_code.co_filename == logging.__file__):
             frame = frame.f_back
             depth += 1
