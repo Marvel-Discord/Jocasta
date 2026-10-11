@@ -4,12 +4,12 @@ import config
 
 import datetime
 import io
-import traceback
 from functools import partial
 
 import aiohttp
 import discord
 from discord import *
+from loguru import logger
 from requests import HTTPError
 
 from config import *
@@ -221,7 +221,7 @@ class SpoilerThreadCog(commands.Cog):
             self, interaction: discord.Interaction, error: Exception
         ) -> None:
             await interaction.response.send_message("Something broke!", ephemeral=True)
-            traceback.print_tb(error.__traceback__)
+            logger.opt(exception=error).error("spoiler thread modal failed")
 
 
 async def setup(bot: commands.Bot):

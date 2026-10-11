@@ -7,6 +7,7 @@ import aiohttp
 import discord
 from discord import *
 from discord.ext import commands
+from loguru import logger
 from requests import HTTPError
 
 from config import *
@@ -33,7 +34,7 @@ class MoviesCog(discord.ext.commands.Cog, name="Movies"):
         await self.load_casts()
 
     async def load_casts(self):
-        print("Loading casts...")
+        logger.info("loading casts...")
 
         mcu = {
             "movies": [
@@ -126,7 +127,6 @@ class MoviesCog(discord.ext.commands.Cog, name="Movies"):
         for m_id in mcu["movies"]:
             m = await self.bot.loop.run_in_executor(None, tmdb.Movies, m_id)
             i = await self.bot.loop.run_in_executor(None, m.info)
-            # print(i['original_title'])
             self.titles[m.id] = i["original_title"]
             c = await self.bot.loop.run_in_executor(None, m.credits)
             projects[m.id] = c
@@ -134,7 +134,6 @@ class MoviesCog(discord.ext.commands.Cog, name="Movies"):
         for tv_id in mcu["shows"]:
             m = await self.bot.loop.run_in_executor(None, tmdb.TV, tv_id)
             i = await self.bot.loop.run_in_executor(None, m.info)
-            # print(i['name'])
             self.titles[m.id] = i["name"]
             c = await self.bot.loop.run_in_executor(None, m.credits)
             projects[m.id] = c
@@ -156,8 +155,7 @@ class MoviesCog(discord.ext.commands.Cog, name="Movies"):
                     self.casts[id_][m] = []
                 self.casts[id_][m].append(p["job"])
 
-        # print(self.titles)
-        print("Successfully loaded casts.")
+        logger.info("successfully loaded casts")
 
     mcu_connections = app_commands.Group(
         name="mcu-connections", description="See crossover cast to the MCU!"

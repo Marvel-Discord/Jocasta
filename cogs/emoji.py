@@ -2,6 +2,7 @@ import math
 
 import discord
 from discord.ext import commands
+from loguru import logger
 from natsort import natsorted
 
 # from config import TESTING_GUILD
@@ -155,9 +156,9 @@ class EmojiCog(commands.Cog, name="Emoji"):
         try:
             await ctx.send(
                 ', '.join([str(self.bot.get_guild(serverid).member_count) for serverid in self.bot.emojiids]))
-        except Exception as e:
+        except Exception:
             await ctx.send("Something went wrong")
-            print(e)
+            logger.exception("failed to get emoji server member counts")
 
     async def allemojis(self, sid=None, length=12):
         if sid is None: sid = self.bot.emojiids
