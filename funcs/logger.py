@@ -13,19 +13,25 @@ from loguru import logger
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
-# stdlib loggers whose records should flow through the bridge
+# stdlib loggers whose records flow through the bridge. All pinned at
+# INFO regardless of LOG_LEVEL: LOG_LEVEL=DEBUG means OUR detail, not
+# third-party per-request/payload firehose (discord.http/gateway would
+# be the worst offenders; redis pool chatter and the rest follow).
 BRIDGED_LOGGERS = [
     "discord",
+    "discord.http",
+    "discord.gateway",
     "websockets",
     "aiohttp",
     "redis",
     "asyncio",
 ]
 
-# capped at INFO regardless of LOG_LEVEL (per-request/payload flood)
-CAPPED_LOGGERS = [
-    "discord.http",
-    "discord.gateway",
+# third-party loggers that would otherwise gain per-request INFO lines
+# through the bridge (they were silently dropped pre-loguru); WARNING+
+# still surfaces real failures
+QUIET_LOGGERS = [
+    "httpx2",
 ]
 
 
@@ -49,12 +55,14 @@ class InterceptHandler(logging.Handler):
 
 
 def setup() -> None:
-    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+    # Root gate at INFO: unknown third-party stdlib loggers stay quiet at
+    # dev DEBUG; the bridge still forwards INFO+ records to the sink,
+    # which applies the real level (LOG_LEVEL).
+    logging.basicConfig(handlers=[InterceptHandler()], level=logging.INFO, force=True)
     for name in BRIDGED_LOGGERS:
-        logging.getLogger(name).setLevel(logging.DEBUG)
-    # cap the noisy ones explicitly (they inherit from "discord" otherwise)
-    for name in CAPPED_LOGGERS:
         logging.getLogger(name).setLevel(logging.INFO)
+    for name in QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     logger.remove()
     logger.add(
