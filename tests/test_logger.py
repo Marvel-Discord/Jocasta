@@ -1,0 +1,52 @@
+"""Tests for the loguru setup + stdlib bridge."""
+import logging
+
+from loguru import logger
+
+from funcs.logger import InterceptHandler
+
+
+def test_intercept_handler_routes_stdlib_into_loguru():
+    messages: list[tuple[str, str]] = []
+    sink_id = logger.add(
+        lambda msg: messages.append((msg.record["level"].name, str(msg.record["message"]))),
+        level="DEBUG",
+    )
+    try:
+        record = logging.LogRecord(
+            name="discord.gateway",
+            level=logging.DEBUG,
+            pathname=__file__,
+            lineno=1,
+            msg="shard connected to %s",
+            args=("session-1",),
+            exc_info=None,
+        )
+        InterceptHandler().emit(record)
+    finally:
+        logger.remove(sink_id)
+
+    assert ("DEBUG", "shard connected to session-1") in messages
+
+
+def test_intercept_handler_maps_warning_level():
+    messages: list[tuple[str, str]] = []
+    sink_id = logger.add(
+        lambda msg: messages.append((msg.record["level"].name, str(msg.record["message"]))),
+        level="DEBUG",
+    )
+    try:
+        record = logging.LogRecord(
+            name="redis",
+            level=logging.WARNING,
+            pathname=__file__,
+            lineno=2,
+            msg="connection pool exhausted",
+            args=(),
+            exc_info=None,
+        )
+        InterceptHandler().emit(record)
+    finally:
+        logger.remove(sink_id)
+
+    assert ("WARNING", "connection pool exhausted") in messages

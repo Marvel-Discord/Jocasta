@@ -1,3 +1,4 @@
+import funcs.logger  # noqa: F401  (loguru setup, before cogs)
 import discord
 from discord.ext import commands
 
@@ -78,4 +79,4 @@ async def globally_block_dms(ctx):
     return ctx.guild is not None
 
 
-bot.run(TOKEN, reconnect=True)
+bot.run(TOKEN, reconnect=True, log_handler=None)
