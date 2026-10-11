@@ -1,5 +1,6 @@
 import redis.asyncio as redis
 from discord.ext import commands
+from loguru import logger
 
 from config import *
 
@@ -18,9 +19,9 @@ class RedisCog(commands.Cog, name="Redis"):
         self.bot.redis = redis.from_url(redis_url, decode_responses=True)
         try:
             await self.bot.redis.ping()
-            print("Connected to Redis")
+            logger.info("connected to redis")
         except Exception as e:
-            print(f"Failed to connect to Redis: {e}")
+            logger.error("failed to connect to redis: {}", e)
             self.bot.redis = None
 
     async def cog_unload(self):

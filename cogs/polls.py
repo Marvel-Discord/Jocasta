@@ -5,7 +5,6 @@ import datetime as _dt
 import enum
 import math
 import re
-import traceback
 
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, cast
@@ -15,10 +14,10 @@ from discord import Attachment, Forbidden, Interaction, NotFound, app_commands
 from discord.app_commands import AppCommandError, Choice
 from discord.app_commands.tree import _log
 from discord.ext import commands
+from loguru import logger
 
 from cogs.time import TimeCog
 from config import (
-    database_listener_logs,
     global_slashies,
     guild_ids,
     polls_api_base_url,
@@ -1093,10 +1092,6 @@ class PollsCog(commands.Cog, name="Polls"):
 
     # websocket listener for poll updates #
 
-    def listener_log(self, msg):
-        if database_listener_logs:
-            print(f"[Polls Listener] {msg}")
-
     def poll_needs_render(self, poll: dict[str, Any]) -> bool:
         """Started (start_time passed) but not yet rendered. Timestamp-
         based, NOT published-based: the API's `published` column is only
@@ -1126,7 +1121,7 @@ class PollsCog(commands.Cog, name="Polls"):
         try:
             poll = await self.fetch_poll(poll_id)
             if not poll:
-                self.listener_log(f"Poll {poll_id} was deleted")
+                logger.debug("poll {} was deleted", poll_id)
                 return
 
             if poll["guild_id"] != self.polls_guild_id():
@@ -1142,18 +1137,17 @@ class PollsCog(commands.Cog, name="Polls"):
 
             if poll["published"]:
                 await self.update_poll_message(poll)
-                self.listener_log(f"Updated message for poll {poll_id}")
+                logger.debug("updated message for poll {}", poll_id)
 
-        except Exception as e:
-            self.listener_log(f"Error handling event for {poll_id}: {e}")
-            traceback.print_exc()
+        except Exception:
+            logger.exception("error handling event for poll {}", poll_id)
 
     async def resync_from_api(self):
         """Full resync on every WS (re)connect. The API's scheduler owns
         timing; these scans are the correctness backstop covering any
         downtime length, plus the persistent-view re-registration."""
         await self.bot.wait_until_ready()
-        self.listener_log("Resyncing from API")
+        logger.info("resyncing from api")
         try:
             await asyncio.gather(
                 self.process_pending_renders(),
@@ -1161,9 +1155,11 @@ class PollsCog(commands.Cog, name="Polls"):
                 self.on_startup_buttons(),
                 self.on_startup_self_assign(),
             )
+            logger.info("resync complete")
         except Exception:
-            traceback.print_exc()
-            self.listener_log("Resync failed — will retry on next WS reconnect")
+            logger.opt(exception=True).warning(
+                "resync failed - will retry on next ws reconnect"
+            )
 
     async def _get_end_watermark(self) -> _dt.datetime:
         """Lower bound for missed-end reconciliation. Persisted in Redis
@@ -1179,7 +1175,9 @@ class PollsCog(commands.Cog, name="Polls"):
                 if stored:
                     return _dt.datetime.fromisoformat(stored)
             except Exception:
-                traceback.print_exc()
+                logger.opt(exception=True).warning(
+                    "end watermark get failed - using fallback"
+                )
         elif self._end_watermark_fallback is not None:
             return self._end_watermark_fallback
         return default
@@ -1189,9 +1187,12 @@ class PollsCog(commands.Cog, name="Polls"):
         if redis is not None:
             try:
                 await redis.set(self.END_WATERMARK_KEY, value.isoformat())
+                logger.debug("end watermark set to {}", value.isoformat())
                 return
             except Exception:
-                traceback.print_exc()
+                logger.opt(exception=True).warning(
+                    "end watermark set failed - using in-memory fallback"
+                )
         self._end_watermark_fallback = value
 
     async def process_pending_renders(self):
@@ -1211,7 +1212,7 @@ class PollsCog(commands.Cog, name="Polls"):
             return False
         if not self.poll_needs_render(poll):
             return False
-        self.listener_log(f"Rendering pending poll {poll_id}")
+        logger.info("rendering pending poll {}", poll_id)
         rendered = await self.split_start_polls(poll_id)
         if rendered:
             refetched = await self.fetch_poll(poll_id)
@@ -1230,11 +1231,13 @@ class PollsCog(commands.Cog, name="Polls"):
         re-emits end frames for 24h)."""
         watermark = await self._get_end_watermark()
         now = discord.utils.utcnow()
+        logger.debug("missed-ends scan from {}", watermark.isoformat())
         polls = await self.bot.polls_api.sync_all_polls(
             self.polls_guild_id(), ended_since=watermark.isoformat()
         )
         for poll in polls:
             await self.finalize_ended_poll(self.poll_dict(poll))
+        logger.debug("missed-ends scan processed {} polls", len(polls))
         await self._set_end_watermark(now)
 
     async def _stop_ws_listener(self):
@@ -1297,7 +1300,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
             tags = [tag["tag"] if tag else None for poll, tag in polls]
             if not tags.count(tags[0]) == len(tags):
-                print("Can't bulk-start polls with different tags!")
+                logger.error("can't bulk-start polls with different tags")
                 return None
 
             poll, tag = polls[0]
@@ -1461,11 +1464,12 @@ class PollsCog(commands.Cog, name="Polls"):
         """Idempotent end-of-life Discord effects: archive + lock the
         poll's threads (Discord's archived state is the marker — a
         repeat call is a no-op) and re-render the final message."""
+        logger.debug("finalizing ended poll {}", poll["id"])
         tag = await self.fetch_tag(poll["tag"])
         guild = await self.fetch_guild_info(poll["guild_id"])
         if guild is None:
-            self.listener_log(
-                f"finalize_ended_poll: guild fetch failed for poll {poll['id']}, aborting"
+            logger.error(
+                "finalize guild fetch failed for poll {}, aborting", poll["id"]
             )
             return
 
@@ -1499,7 +1503,7 @@ class PollsCog(commands.Cog, name="Polls"):
                             await thread.edit(archived=True, locked=True)
                             break
         except Exception:
-            traceback.print_exc()
+            logger.exception("finalize archive failed for poll {}", poll["id"])
 
         await self.update_poll_message(poll)
 
@@ -1532,7 +1536,7 @@ class PollsCog(commands.Cog, name="Polls"):
             try:
                 await self.do_update_poll_message(poll)
             except Exception:
-                traceback.print_exc()
+                logger.exception("update loop failed for poll {}", poll["id"])
 
             wait = 2
             await asyncio.sleep(wait)
@@ -1562,12 +1566,7 @@ class PollsCog(commands.Cog, name="Polls"):
             and msg.embeds
             and msg.embeds[0] == txt["embed"]
         ):
-            print(
-                force,
-                txt["content"] == msg.content,
-                bool(msg.embeds),
-                msg.embeds[0] == txt["embed"],
-            )
+            logger.debug("poll {} message unchanged - skipping edit", poll["id"])
             return
 
         if msg.author.id == self.bot.user.id:
@@ -1918,7 +1917,7 @@ class PollsCog(commands.Cog, name="Polls"):
             self, interaction: discord.Interaction, error: Exception
         ) -> None:
             await interaction.response.send_message("Something broke!", ephemeral=True)
-            traceback.print_tb(error.__traceback__)
+            logger.opt(exception=error).error("poll edit modal failed")
 
     class EditView(discord.ui.View):
         def __init__(self, *, items, modal: type[PollsCog.EditModal], groups, title):
@@ -3550,7 +3549,7 @@ class PollsCog(commands.Cog, name="Polls"):
             else:
                 tag = tag_obj["tag"]
 
-        print("~~~ Running SYNC ~~~")
+        logger.info("running admin sync")
 
         tasks = {
             k: {"txt": v, "status": False}
@@ -3615,7 +3614,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         # polls = await refresh_polls()
 
-        print("~~~ End SYNC ~~~")
+        logger.info("admin sync complete")
 
     @poll_admin_sync.autocomplete("tag")
     async def poll_admin_sync_autocomplete_tag(

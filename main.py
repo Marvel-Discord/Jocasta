@@ -1,5 +1,7 @@
+import funcs.logger  # noqa: F401  (loguru setup, before cogs)
 import discord
 from discord.ext import commands
+from loguru import logger
 
 from config import *
 
@@ -52,7 +54,7 @@ bot.tasks = {}
 
 @bot.event
 async def on_connect():
-    print("Loaded Discord")
+    logger.info("Loaded Discord")
 
 
 # activity = discord.Game(name="Starting up...")
@@ -61,12 +63,7 @@ async def on_connect():
 
 @bot.event
 async def on_ready():
-    print("------")
-    print("Logged in as")
-    print(bot.user.name)
-    print(bot.user.id)
-    print(discord.utils.utcnow().strftime("%d/%m/%Y %I:%M:%S:%f"))
-    print("------")
+    logger.info("Logged in as {} ({})", bot.user.name, bot.user.id)
 
 
 # statusactivity = f"discord.gg/marvel | Type {BOT_PREFIX}help"
@@ -78,4 +75,4 @@ async def globally_block_dms(ctx):
     return ctx.guild is not None
 
 
-bot.run(TOKEN, reconnect=True)
+bot.run(TOKEN, reconnect=True, log_handler=None)

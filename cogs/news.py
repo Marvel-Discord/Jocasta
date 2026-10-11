@@ -5,6 +5,8 @@ from discord import *
 from discord.app_commands import *
 from discord.app_commands.tree import _log
 from discord.ext import commands
+from loguru import logger
+
 from config import *
 
 RELAY_FEED_CHANNELS = [600755455052218382]
@@ -192,8 +194,8 @@ class NewsCog(discord.ext.commands.Cog, name="News"):
             if self.bot.redis:
                 try:
                     latest_message_id = await self.bot.redis.get(key)
-                except Exception as e:
-                    print(f"[News] Failed to read from Redis: {e}")
+                except Exception:
+                    logger.exception("failed to read from Redis")
 
             if latest_message_id:
                 try:
@@ -201,12 +203,13 @@ class NewsCog(discord.ext.commands.Cog, name="News"):
                 except NotFound:
                     pass
                 except ValueError:
-                    print(
-                        f"[News] Invalid message_id in Redis for channel "
-                        f"{channel.id}: {latest_message_id!r}"
+                    logger.exception(
+                        "invalid message_id in Redis for channel {}: {!r}",
+                        channel.id,
+                        latest_message_id,
                     )
-                except Exception as e:
-                    print(f"[News] Failed to fetch old message: {e}")
+                except Exception:
+                    logger.exception("failed to fetch old message")
                 else:
                     if (
                         discord.utils.utcnow() - oldmsg.created_at
@@ -234,8 +237,8 @@ class NewsCog(discord.ext.commands.Cog, name="News"):
             if self.bot.redis:
                 try:
                     await self.bot.redis.set(key, str(msg.id))
-                except Exception as e:
-                    print(f"[News] Failed to write to Redis: {e}")
+                except Exception:
+                    logger.exception("failed to write to Redis")
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
