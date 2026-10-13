@@ -54,6 +54,24 @@ class InterceptHandler(logging.Handler):
         )
 
 
+# Tracebacks render WITHOUT frame locals (diagnose) or extended frames
+# (backtrace): bridged stdlib exceptions (asyncio's "Task exception was
+# never retrieved" in particular) walk all the way up to Client.run, whose
+# frame locals contain the raw bot token — locals in tracebacks would leak
+# credentials into container logs (found live in dev, 2026-10-13).
+SINK_OPTIONS = {
+    "level": LOG_LEVEL,
+    "format": (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>"
+    ),
+    "backtrace": False,
+    "diagnose": False,
+}
+
+
 def setup() -> None:
     # Root gate at INFO: unknown third-party stdlib loggers stay quiet at
     # dev DEBUG; the bridge still forwards INFO+ records to the sink,
@@ -65,16 +83,7 @@ def setup() -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
     logger.remove()
-    logger.add(
-        sys.stderr,
-        level=LOG_LEVEL,
-        format=(
-            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-            "<level>{level: <8}</level> | "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-            "<level>{message}</level>"
-        ),
-    )
+    logger.add(sys.stderr, **SINK_OPTIONS)
 
 
 setup()
