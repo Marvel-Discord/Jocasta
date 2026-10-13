@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord.ext.commands import *
 from typing import *
 
-import datetime, traceback
+from loguru import logger
 
 
 class OwnerCog(commands.Cog, name="Owner"):
@@ -23,8 +23,10 @@ class OwnerCog(commands.Cog, name="Owner"):
         except discord.Forbidden:
             await ctx.author.send("Shutting down...")
 
-        print(f"Shutting down...")
-        print(discord.utils.utcnow().strftime("%d/%m/%Y %I:%M:%S:%f"))
+        logger.info(
+            "shutting down at {}",
+            discord.utils.utcnow().strftime("%d/%m/%Y %I:%M:%S:%f"),
+        )
 
         await self.bot.close()
 
@@ -42,9 +44,7 @@ class OwnerCog(commands.Cog, name="Owner"):
             return await ctx.send(f'**ERROR:** {type(e).__name__} - {e}')
         else:
             await ctx.send(f'Successfully loaded `{cog}`.')
-        print('---')
-        print(f'{cog} was loaded.')
-        print('---')
+        logger.info('{} was loaded.', cog)
 
     @cogs.command(name='unload')
     async def unloadcog(self, ctx, *, cog: str):
@@ -56,9 +56,7 @@ class OwnerCog(commands.Cog, name="Owner"):
             return await ctx.send(f'**ERROR:** {type(e).__name__} - {e}')
         else:
             await ctx.send(f'Successfully unloaded `{cog}`.')
-        print('---')
-        print(f'{cog} was unloaded.')
-        print('---')
+        logger.info('{} was unloaded.', cog)
 
     @cogs.command(name='reload')
     async def reloadcog(self, ctx, *, cog: str):
@@ -71,9 +69,7 @@ class OwnerCog(commands.Cog, name="Owner"):
         else:
             await ctx.send(f'Successfully reloaded `{cog}`.')
         self.bot.recentcog = cog
-        print('---')
-        print(f'{cog} was reloaded.')
-        print('---')
+        logger.info('{} was reloaded.', cog)
 
     @commands.command(hidden=True, aliases=['crr'])
     async def cogrecentreload(self, ctx):
@@ -113,8 +109,8 @@ class OwnerCog(commands.Cog, name="Owner"):
                     f"Synced {len(synced)} commands {'globally' if spec is None else 'to the current guild.'}"
                 )
                 return
-            except Exception as e:
-                traceback.print_exc()
+            except Exception:
+                logger.exception("sync command failed")
                 await ctx.send("Something went wrong!")
 
         ret = 0

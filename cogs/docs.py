@@ -5,6 +5,7 @@ import aiohttp
 import discord
 from discord import *
 from discord.ext import commands
+from loguru import logger
 
 from config import GITHUB_PAT_DOCS
 
@@ -55,7 +56,7 @@ async def get_files_in_folder(session, path=""):
     data = await fetch(session, query)
 
     if "errors" in data:
-        print("Error:", data["errors"])
+        logger.error("error listing docs files: {}", data["errors"])
         return []
 
     files = []
@@ -86,7 +87,7 @@ async def get_file_content(session, file_path):
     data = await fetch(session, query)
 
     if "errors" in data:
-        print(f"Error fetching {file_path}:", data["errors"])
+        logger.error("error fetching {}: {}", file_path, data["errors"])
         return None
 
     return data["data"]["repository"]["object"]["text"]

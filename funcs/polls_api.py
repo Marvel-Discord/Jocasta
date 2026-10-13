@@ -3,6 +3,7 @@ from enum import StrEnum, auto
 
 import httpx2
 from discord.ext import commands
+from loguru import logger
 
 from config import *
 from funcs.polls_api_models import (
@@ -108,10 +109,13 @@ class PollsAPIClient:
             except httpx2.HTTPError as e:
                 last_exc = e
                 if attempt + 1 < attempts:
+                    logger.debug("retrying {} {} (attempt {}/{})", method, path, attempt + 1, attempts)
                     await asyncio.sleep(BACKOFF_SCHEDULE[min(attempt, len(BACKOFF_SCHEDULE) - 1)])
                     continue
+                logger.error("{} {} failed: {}", method, path, e)
                 raise PollsAPIError(0, f"network error: {e}") from e
             if response.status_code in RETRYABLE_STATUS and attempt + 1 < attempts:
+                logger.debug("retrying {} {} (attempt {}/{})", method, path, attempt + 1, attempts)
                 await asyncio.sleep(BACKOFF_SCHEDULE[min(attempt, len(BACKOFF_SCHEDULE) - 1)])
                 continue
             if response.is_error:

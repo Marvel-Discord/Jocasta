@@ -5,7 +5,6 @@ import datetime as _dt
 import enum
 import math
 import re
-import traceback
 
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, cast
@@ -15,10 +14,10 @@ from discord import Attachment, Forbidden, Interaction, NotFound, app_commands
 from discord.app_commands import AppCommandError, Choice
 from discord.app_commands.tree import _log
 from discord.ext import commands
+from loguru import logger
 
 from cogs.time import TimeCog
 from config import (
-    database_listener_logs,
     global_slashies,
     guild_ids,
     polls_api_base_url,
@@ -359,6 +358,7 @@ class PollsCog(commands.Cog, name="Polls"):
     async def fetch_all_polls(
         self, show_unpublished: bool = False
     ) -> list[dict[str, Any]]:
+        logger.debug("fetching all polls (show unpublished: {})", show_unpublished)
         guild_id = self.polls_guild_id()
         guild = await self.fetch_guild_info(guild_id)
         tags = {t["tag"]: t for t in await self.fetch_all_tags()}
@@ -366,6 +366,7 @@ class PollsCog(commands.Cog, name="Polls"):
         out = [self.poll_dict(poll, tags.get(poll.tag), guild) for poll in polls]
         if not show_unpublished:
             out = [poll for poll in out if poll["published"]]
+        logger.debug("fetched {} polls", len(out))
         return out
 
     async def fetch_poll(self, poll_id: int) -> dict[str, Any] | None:
@@ -373,6 +374,7 @@ class PollsCog(commands.Cog, name="Polls"):
             poll = await self.bot.polls_api.get_poll(poll_id)
         except PollsAPIError as e:
             if e.status == 404:
+                logger.debug("poll {} not found", poll_id)
                 return None
             raise
         tag = await self.fetch_tag(poll.tag)
@@ -380,15 +382,18 @@ class PollsCog(commands.Cog, name="Polls"):
         return self.poll_dict(poll, tag, guild)
 
     async def fetch_poll_msg(self, poll: dict[str, Any]):
-        return await self.bot.get_channel(
+        msg = await self.bot.get_channel(
             poll["channel_id"] if not poll["fallback"] else poll["fallback_channel_id"]
         ).fetch_message(poll["message_id"])
+        logger.debug("found poll message {} in channel {}", msg.id, msg.channel.id)
+        return msg
 
     async def fetch_guild_info(self, guild_id: int) -> dict[str, Any] | None:
         try:
             guild = await self.bot.polls_api.get_guild(guild_id)
         except PollsAPIError as e:
             if e.status == 404:
+                logger.debug("guild info {} not found", guild_id)
                 return None
             raise
         return guild.model_dump()
@@ -408,6 +413,7 @@ class PollsCog(commands.Cog, name="Polls"):
             tag = await self.bot.polls_api.get_tag(tag_id)
         except PollsAPIError as e:
             if e.status == 404:
+                logger.debug("tag {} not found", tag_id)
                 return None
             raise
         return tag.model_dump()
@@ -1093,10 +1099,6 @@ class PollsCog(commands.Cog, name="Polls"):
 
     # websocket listener for poll updates #
 
-    def listener_log(self, msg):
-        if database_listener_logs:
-            print(f"[Polls Listener] {msg}")
-
     def poll_needs_render(self, poll: dict[str, Any]) -> bool:
         """Started (start_time passed) but not yet rendered. Timestamp-
         based, NOT published-based: the API's `published` column is only
@@ -1126,10 +1128,13 @@ class PollsCog(commands.Cog, name="Polls"):
         try:
             poll = await self.fetch_poll(poll_id)
             if not poll:
-                self.listener_log(f"Poll {poll_id} was deleted")
+                logger.debug("poll {} was deleted", poll_id)
                 return
 
             if poll["guild_id"] != self.polls_guild_id():
+                logger.debug(
+                    "skipping poll {} from foreign guild {}", poll_id, poll["guild_id"]
+                )
                 return
 
             if self.poll_needs_render(poll):
@@ -1142,18 +1147,19 @@ class PollsCog(commands.Cog, name="Polls"):
 
             if poll["published"]:
                 await self.update_poll_message(poll)
-                self.listener_log(f"Updated message for poll {poll_id}")
+                logger.debug("updated message for poll {}", poll_id)
+            else:
+                logger.debug("no action for unpublished poll {}", poll_id)
 
-        except Exception as e:
-            self.listener_log(f"Error handling event for {poll_id}: {e}")
-            traceback.print_exc()
+        except Exception:
+            logger.exception("error handling event for poll {}", poll_id)
 
     async def resync_from_api(self):
         """Full resync on every WS (re)connect. The API's scheduler owns
         timing; these scans are the correctness backstop covering any
         downtime length, plus the persistent-view re-registration."""
         await self.bot.wait_until_ready()
-        self.listener_log("Resyncing from API")
+        logger.info("resyncing from api")
         try:
             await asyncio.gather(
                 self.process_pending_renders(),
@@ -1161,9 +1167,11 @@ class PollsCog(commands.Cog, name="Polls"):
                 self.on_startup_buttons(),
                 self.on_startup_self_assign(),
             )
+            logger.info("resync complete")
         except Exception:
-            traceback.print_exc()
-            self.listener_log("Resync failed — will retry on next WS reconnect")
+            logger.opt(exception=True).warning(
+                "resync failed - will retry on next ws reconnect"
+            )
 
     async def _get_end_watermark(self) -> _dt.datetime:
         """Lower bound for missed-end reconciliation. Persisted in Redis
@@ -1177,11 +1185,19 @@ class PollsCog(commands.Cog, name="Polls"):
             try:
                 stored = await redis.get(self.END_WATERMARK_KEY)
                 if stored:
+                    logger.debug("end watermark from redis: {}", stored)
                     return _dt.datetime.fromisoformat(stored)
             except Exception:
-                traceback.print_exc()
+                logger.opt(exception=True).warning(
+                    "end watermark get failed - using fallback"
+                )
         elif self._end_watermark_fallback is not None:
+            logger.debug(
+                "end watermark from in-memory fallback: {}",
+                self._end_watermark_fallback.isoformat(),
+            )
             return self._end_watermark_fallback
+        logger.debug("end watermark using 24h default: {}", default.isoformat())
         return default
 
     async def _set_end_watermark(self, value: _dt.datetime):
@@ -1189,9 +1205,12 @@ class PollsCog(commands.Cog, name="Polls"):
         if redis is not None:
             try:
                 await redis.set(self.END_WATERMARK_KEY, value.isoformat())
+                logger.debug("end watermark set to {}", value.isoformat())
                 return
             except Exception:
-                traceback.print_exc()
+                logger.opt(exception=True).warning(
+                    "end watermark set failed - using in-memory fallback"
+                )
         self._end_watermark_fallback = value
 
     async def process_pending_renders(self):
@@ -1199,19 +1218,27 @@ class PollsCog(commands.Cog, name="Polls"):
         has no Discord message yet (message_id IS NULL server-side).
         The set only shrinks as renders land, so this needs no
         watermark."""
+        logger.debug("pending-renders scan starting")
         polls = await self.bot.polls_api.sync_all_polls(
             self.polls_guild_id(), pending_render=True
         )
+        logger.debug("pending-renders scan attempting {} polls", len(polls))
         for poll in polls:
             await self.render_pending_poll(poll.id)
 
     async def render_pending_poll(self, poll_id: int) -> bool:
         poll = await self.fetch_poll(poll_id)
         if poll is None or poll["guild_id"] != self.polls_guild_id():
+            logger.debug(
+                "render skip for poll {}: {}",
+                poll_id,
+                "not found" if poll is None else f"foreign guild {poll['guild_id']}",
+            )
             return False
         if not self.poll_needs_render(poll):
+            logger.debug("poll {} does not need render", poll_id)
             return False
-        self.listener_log(f"Rendering pending poll {poll_id}")
+        logger.info("rendering pending poll {}", poll_id)
         rendered = await self.split_start_polls(poll_id)
         if rendered:
             refetched = await self.fetch_poll(poll_id)
@@ -1230,11 +1257,13 @@ class PollsCog(commands.Cog, name="Polls"):
         re-emits end frames for 24h)."""
         watermark = await self._get_end_watermark()
         now = discord.utils.utcnow()
+        logger.debug("missed-ends scan from {}", watermark.isoformat())
         polls = await self.bot.polls_api.sync_all_polls(
             self.polls_guild_id(), ended_since=watermark.isoformat()
         )
         for poll in polls:
             await self.finalize_ended_poll(self.poll_dict(poll))
+        logger.debug("missed-ends scan processed {} polls", len(polls))
         await self._set_end_watermark(now)
 
     async def _stop_ws_listener(self):
@@ -1263,6 +1292,11 @@ class PollsCog(commands.Cog, name="Polls"):
             else:
                 polls[tid] = [poll_id]
 
+        logger.debug(
+            "grouped {} polls into {} tag groups",
+            sum(len(p) for p in polls.values()),
+            len(polls),
+        )
         if not polls:
             return False
 
@@ -1279,9 +1313,15 @@ class PollsCog(commands.Cog, name="Polls"):
         if not isinstance(poll_ids, list):
             poll_ids = [poll_ids]
 
+        logger.debug("starting polls {}", poll_ids)
+
         # In-flight guard: a manual /polls start and a sweep-driven
         # render can race (the API frame lands before the render report
         # sets message_id). Skip ids already being rendered.
+        logger.debug(
+            "render guard skipping already-rendering polls: {}",
+            [i for i in poll_ids if i in self.bot.rendering_polls],
+        )
         poll_ids = [i for i in poll_ids if i not in self.bot.rendering_polls]
         if not poll_ids:
             return None
@@ -1297,7 +1337,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
             tags = [tag["tag"] if tag else None for poll, tag in polls]
             if not tags.count(tags[0]) == len(tags):
-                print("Can't bulk-start polls with different tags!")
+                logger.error("can't bulk-start polls with different tags")
                 return None
 
             poll, tag = polls[0]
@@ -1305,6 +1345,11 @@ class PollsCog(commands.Cog, name="Polls"):
                 return None
             guild = await self.fetch_guild_info(poll["guild_id"])
             channel_id = self.fetch_channel_id(guild, tag)
+            logger.debug(
+                "resolved channel {} for tag {}",
+                channel_id,
+                tag["tag"] if tag else None,
+            )
 
             msgs = [
                 [await self.format_poll_message(p), p]
@@ -1320,6 +1365,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
             async def send(txt, poll, channel, *, main=True):
                 msg = await channel.send(**txt)
+                logger.debug("posted message {} for poll {}", msg.id, poll["id"])
 
                 if poll["thread_question"]:
                     name = poll["question"]
@@ -1327,6 +1373,9 @@ class PollsCog(commands.Cog, name="Polls"):
                         name = f"{poll['num']} - {name}"
                     try:
                         thread = await msg.create_thread(name=name)
+                        logger.debug(
+                            "created thread {} for poll {}", thread.id, poll["id"]
+                        )
                         thread_question_message = self.default_thread_msg(poll["thread_question"])
                         if not thread_question_message[0]:
                             thread_message = await thread.send(thread_question_message[1])
@@ -1345,11 +1394,16 @@ class PollsCog(commands.Cog, name="Polls"):
                     final.append([poll, crosspost_msg])
                     crosspost_ids.append(crosspost_msg.id)
 
+                logger.debug(
+                    "sent {} crossposts for poll {}", len(crosspost_ids), poll["id"]
+                )
                 await self.bot.polls_api.publish_poll(
                     poll["id"], main_msg.id, crosspost_ids
                 )
+                logger.info("published poll {}", poll["id"])
 
             if tag and tag["end_message"]:
+                logger.debug("sending end message for tag {}", tag["tag"])
                 txt: dict[str, Any] = {"content": None, "embed": None, "view": None}
 
                 view = None
@@ -1408,6 +1462,11 @@ class PollsCog(commands.Cog, name="Polls"):
                                     continue
                                 else:
                                     await msg.delete()
+                                    logger.debug(
+                                        "deleted replaced end message {} for tag {}",
+                                        message_id,
+                                        t["tag"],
+                                    )
                                     change = True
                                     latest.remove(message_id)
                                     break
@@ -1423,6 +1482,7 @@ class PollsCog(commands.Cog, name="Polls"):
             for poll, t in polls:
                 if poll is None:
                     continue
+                logger.debug("re-rendering poll {} after publish", poll["id"])
                 refreshed = await self.fetch_poll(poll["id"])
                 if refreshed is not None:
                     await self.update_poll_message(refreshed)
@@ -1437,10 +1497,13 @@ class PollsCog(commands.Cog, name="Polls"):
         endpoint (a normal write — its WS echo is suppressed for bot
         calls), then run the end-of-life effects. Natural ends are the
         API scheduler's business now; this method no longer serves them."""
+        logger.debug("ending poll {} by user {}", poll_id, user_id)
         poll = await self.fetch_poll(poll_id)
         if poll is None or not poll["active"]:
+            logger.debug("end skipped for poll {}: missing or inactive", poll_id)
             return
 
+        logger.debug("writing end time for poll {}", poll_id)
         await self.bot.polls_api.update_polls(
             [
                 {
@@ -1461,11 +1524,12 @@ class PollsCog(commands.Cog, name="Polls"):
         """Idempotent end-of-life Discord effects: archive + lock the
         poll's threads (Discord's archived state is the marker — a
         repeat call is a no-op) and re-render the final message."""
+        logger.debug("finalizing ended poll {}", poll["id"])
         tag = await self.fetch_tag(poll["tag"])
         guild = await self.fetch_guild_info(poll["guild_id"])
         if guild is None:
-            self.listener_log(
-                f"finalize_ended_poll: guild fetch failed for poll {poll['id']}, aborting"
+            logger.error(
+                "finalize guild fetch failed for poll {}, aborting", poll["id"]
             )
             return
 
@@ -1499,7 +1563,7 @@ class PollsCog(commands.Cog, name="Polls"):
                             await thread.edit(archived=True, locked=True)
                             break
         except Exception:
-            traceback.print_exc()
+            logger.exception("finalize archive failed for poll {}", poll["id"])
 
         await self.update_poll_message(poll)
 
@@ -1520,9 +1584,11 @@ class PollsCog(commands.Cog, name="Polls"):
     async def update_poll_message(self, poll: dict[str, Any]):
         async with self.bot.update_msg_lock:
             if poll["id"] not in self.bot.update_msg_flags.keys():
+                logger.debug("queued message update for poll {}", poll["id"])
                 self.bot.update_msg_flags[poll["id"]] = True
                 self.bot.loop.create_task(self.loop_update_poll_message(poll))
             else:
+                logger.debug("deferred message update for poll {}", poll["id"])
                 self.bot.update_msg_flags[poll["id"]] = True
 
     async def loop_update_poll_message(self, poll: dict[str, Any]):
@@ -1532,13 +1598,17 @@ class PollsCog(commands.Cog, name="Polls"):
             try:
                 await self.do_update_poll_message(poll)
             except Exception:
-                traceback.print_exc()
+                logger.exception("update loop failed for poll {}", poll["id"])
 
             wait = 2
+            logger.debug(
+                "poll {} update loop waiting {}s for further updates", poll["id"], wait
+            )
             await asyncio.sleep(wait)
         self.bot.update_msg_flags.pop(poll["id"])
 
     async def do_update_poll_message(self, poll: dict[str, Any], force: bool = False):
+        logger.debug("updating message for poll {}", poll["id"])
         tag = await self.fetch_tag(poll["tag"])
 
         crossposts = (
@@ -1562,16 +1632,12 @@ class PollsCog(commands.Cog, name="Polls"):
             and msg.embeds
             and msg.embeds[0] == txt["embed"]
         ):
-            print(
-                force,
-                txt["content"] == msg.content,
-                bool(msg.embeds),
-                msg.embeds[0] == txt["embed"],
-            )
+            logger.debug("poll {} message unchanged - skipping edit", poll["id"])
             return
 
         if msg.author.id == self.bot.user.id:
             await msg.edit(**txt)
+            logger.debug("edited message {} for poll {}", msg.id, poll["id"])
 
         if poll["crosspost_message_ids"]:
             for mid in poll["crosspost_message_ids"]:
@@ -1579,10 +1645,16 @@ class PollsCog(commands.Cog, name="Polls"):
                     try:
                         msg = await ch.fetch_message(mid)
                     except NotFound:
+                        logger.debug(
+                            "crosspost {} for poll {} not found", mid, poll["id"]
+                        )
                         continue
                     else:
                         if msg.author.id == self.bot.user.id:
                             await msg.edit(**txt)
+                            logger.debug(
+                                "edited crosspost {} for poll {}", mid, poll["id"]
+                            )
 
     def default_thread_msg(self, msg, vote=None):
         default = False
@@ -1653,8 +1725,15 @@ class PollsCog(commands.Cog, name="Polls"):
         async def vote(self, client, poll, interaction, value):
             await interaction.response.defer()
 
+            logger.debug(
+                "vote on poll {} by user {}: choice {}",
+                poll["id"],
+                interaction.user.id,
+                value,
+            )
             fetched = await client.fetch_poll(poll["id"])
             if fetched is None:
+                logger.debug("vote on vanished poll {}", poll["id"])
                 return
             poll = dict(fetched)
 
@@ -1692,6 +1771,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 await client.add_to_thread(interaction, poll, value)
 
             else:
+                logger.debug("vote rejected on ended poll {}", poll["id"])
                 await interaction.followup.send(f"This poll has ended!", ephemeral=True)
 
         class ChoiceButton(discord.ui.Button):
@@ -1794,8 +1874,15 @@ class PollsCog(commands.Cog, name="Polls"):
         poll["votes"] = counts.votes
         poll["total_votes"] = counts.total_votes
 
-        await self.update_poll_message(poll)
+        logger.debug(
+            "vote on poll {} by user {} choice {} - total {} votes",
+            poll["id"],
+            user.id,
+            choice,
+            poll["total_votes"],
+        )
 
+        await self.update_poll_message(poll)
         return choice
 
     async def get_user_vote(self, poll: dict[str, Any], user) -> int | None:
@@ -1803,7 +1890,11 @@ class PollsCog(commands.Cog, name="Polls"):
         votes = await self.bot.polls_api.get_user_votes(user.id)
         for vote in votes:
             if vote.poll_id == poll["id"]:
+                logger.debug(
+                    "user {} vote on poll {}: {}", user.id, poll["id"], vote.choice
+                )
                 return vote.choice
+        logger.debug("user {} has no vote on poll {}", user.id, poll["id"])
         return None
 
     async def add_to_thread(
@@ -1815,6 +1906,7 @@ class PollsCog(commands.Cog, name="Polls"):
     ):
         thread = interaction.message.guild.get_channel_or_thread(interaction.message.id)
         if thread and poll and poll["thread_question"]:
+            logger.debug("thread {} found for poll {}", thread.id, poll["id"])
             try:
                 try:
                     await thread.fetch_member(interaction.user.id)
@@ -1835,14 +1927,21 @@ class PollsCog(commands.Cog, name="Polls"):
                             embed=embed,
                             delete_after=45,
                         )
+                        logger.debug("sent thread ping for poll {}", poll["id"])
             except Forbidden:
+                logger.warning("thread ping forbidden for poll {}", poll["id"])
                 pass
             finally:
                 pass
-            # if show_vote and poll and choice is not None:
-            # 	embed = discord.Embed()
-            # 	embed.description = f"{interaction.user.mention} voted for {self.choice_format(choice)} *{poll['choices'][choice]}*\nIn this thread, discuss: {poll['thread_question']}"
-            # 	await thread.send(embed=embed)
+        else:
+            logger.debug(
+                "no thread for poll {} - skipping add to thread",
+                poll["id"] if poll else "unknown",
+            )
+        # if show_vote and poll and choice is not None:
+        # 	embed = discord.Embed()
+        # 	embed.description = f"{interaction.user.mention} voted for {self.choice_format(choice)} *{poll['choices'][choice]}*\nIn this thread, discuss: {poll['thread_question']}"
+        # 	await thread.send(embed=embed)
 
     class SelfAssignRoleView(discord.ui.View):
         def __init__(self, role_ids):
@@ -1918,7 +2017,7 @@ class PollsCog(commands.Cog, name="Polls"):
             self, interaction: discord.Interaction, error: Exception
         ) -> None:
             await interaction.response.send_message("Something broke!", ephemeral=True)
-            traceback.print_tb(error.__traceback__)
+            logger.opt(exception=error).error("poll edit modal failed")
 
     class EditView(discord.ui.View):
         def __init__(self, *, items, modal: type[PollsCog.EditModal], groups, title):
@@ -2130,6 +2229,10 @@ class PollsCog(commands.Cog, name="Polls"):
             i for i in [opt_1, opt_2, opt_3, opt_4, opt_5, opt_6, opt_7, opt_8] if i
         ]
 
+        logger.info(
+            "poll create by user {}: {} choices", interaction.user.id, len(choices)
+        )
+
         image_value: str | Attachment | None = image
         if image and image.content_type and image.content_type.split("/")[0] == "image":
             image_value = image.url
@@ -2294,16 +2397,25 @@ class PollsCog(commands.Cog, name="Polls"):
 
         await interaction.response.defer()
 
+        logger.info("poll delete by user {}: poll {}", interaction.user.id, poll_id)
+
         poll = await self.fetch_poll(poll_id)
 
         if not poll or not await self.has_manager_perms_by_user_and_ids(
             interaction.user, poll["guild_id"], interaction.channel_id
         ):
+            logger.debug(
+                "poll delete rejected for poll {}: not found or no permission",
+                poll_id,
+            )
             return await interaction.followup.send(
                 f"Couldn't find a poll with the ID `{poll_id}`."
             )
 
         if poll["published"]:
+            logger.debug(
+                "poll delete rejected for poll {}: already published", poll_id
+            )
             return await interaction.followup.send(
                 f"This poll has already been published, and cannot be deleted."
             )
@@ -2391,17 +2503,25 @@ class PollsCog(commands.Cog, name="Polls"):
 
         await interaction.response.defer()
 
+        logger.info("poll edit by user {}: poll {}", interaction.user.id, poll_id)
+
         poll = await self.fetch_poll(poll_id)
 
         if not poll or not await self.has_manager_perms_by_user_and_ids(
             interaction.user, poll["guild_id"], interaction.channel_id
         ):
+            logger.debug(
+                "poll edit rejected for poll {}: not found or no permission", poll_id
+            )
             return await interaction.followup.send(
                 f"Couldn't find a poll with the ID `{poll_id}`."
             )
         old_poll = poll
 
         if poll["published"] and tag:
+            logger.debug(
+                "poll edit rejected for poll {}: already published", poll_id
+            )
             return await interaction.followup.send(
                 "You can't edit tags once the poll's been published!"
             )
@@ -2708,6 +2828,10 @@ class PollsCog(commands.Cog, name="Polls"):
 
         await interaction.response.defer()
 
+        logger.info(
+            "poll schedule by user {}: poll {}", interaction.user.id, poll_id
+        )
+
         clear_schedule = schedule_time == -1
         if clear_schedule:
             schedule_time = None
@@ -2729,6 +2853,10 @@ class PollsCog(commands.Cog, name="Polls"):
         if not poll or not await self.has_manager_perms_by_user_and_ids(
             interaction.user, poll["guild_id"], interaction.channel_id
         ):
+            logger.debug(
+                "poll schedule rejected for poll {}: not found or no permission",
+                poll_id,
+            )
             return await interaction.followup.send(
                 f"Couldn't find a poll with the ID `{poll_id}`."
             )
@@ -2737,6 +2865,9 @@ class PollsCog(commands.Cog, name="Polls"):
 
         if poll["published"]:
             if schedule_time:
+                logger.debug(
+                    "poll schedule rejected for poll {}: already published", poll_id
+                )
                 return await interaction.followup.send(
                     f"This poll has already been published, therefore the start time cannot be rescheduled."
                 )
@@ -2926,16 +3057,24 @@ class PollsCog(commands.Cog, name="Polls"):
 
         await interaction.response.defer()
 
+        logger.info("poll start by user {}: poll {}", interaction.user.id, poll_id)
+
         poll = await self.fetch_poll(poll_id)
 
         if not poll or not await self.has_manager_perms_by_user_and_ids(
             interaction.user, poll["guild_id"], interaction.channel_id
         ):
+            logger.debug(
+                "poll start rejected for poll {}: not found or no permission", poll_id
+            )
             return await interaction.followup.send(
                 f"Couldn't find a poll with the ID `{poll_id}`."
             )
 
         if poll["published"]:
+            logger.debug(
+                "poll start rejected for poll {}: already published", poll_id
+            )
             return await interaction.followup.send(
                 f"This poll has already been published!"
             )
@@ -3010,16 +3149,22 @@ class PollsCog(commands.Cog, name="Polls"):
 
         await interaction.response.defer()
 
+        logger.info("poll end by user {}: poll {}", interaction.user.id, poll_id)
+
         poll = await self.fetch_poll(poll_id)
 
         if not poll or not await self.has_manager_perms_by_user_and_ids(
             interaction.user, poll["guild_id"], interaction.channel_id
         ):
+            logger.debug(
+                "poll end rejected for poll {}: not found or no permission", poll_id
+            )
             return await interaction.followup.send(
                 f"Couldn't find a poll with the ID `{poll_id}`."
             )
 
         if not poll["active"]:
+            logger.debug("poll end rejected for poll {}: not active", poll_id)
             return await interaction.followup.send(f"This poll is not active!")
 
         await self.end_poll(poll["id"], user_id=interaction.user.id)
@@ -3473,6 +3618,10 @@ class PollsCog(commands.Cog, name="Polls"):
 
         await interaction.response.defer()
 
+        logger.info(
+            "bulk edit by user {}: tag {}", interaction.user.id, tag
+        )
+
         if all(i == None for i in [show_question, show_options, show_voting]):
             return await interaction.followup.send("You're not editing anything!")
 
@@ -3550,7 +3699,7 @@ class PollsCog(commands.Cog, name="Polls"):
             else:
                 tag = tag_obj["tag"]
 
-        print("~~~ Running SYNC ~~~")
+        logger.info("running admin sync")
 
         tasks = {
             k: {"txt": v, "status": False}
@@ -3615,7 +3764,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         # polls = await refresh_polls()
 
-        print("~~~ End SYNC ~~~")
+        logger.info("admin sync complete")
 
     @poll_admin_sync.autocomplete("tag")
     async def poll_admin_sync_autocomplete_tag(

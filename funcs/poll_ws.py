@@ -3,6 +3,7 @@ import json
 import time
 
 import websockets
+from loguru import logger
 
 from funcs.polls_api_models import BotEventFrame
 
@@ -50,17 +51,23 @@ class PollWebSocketClient:
                         try:
                             frame = BotEventFrame.model_validate_json(message)
                         except Exception as e:
-                            print(f"[PollWS] Discarding malformed frame: {e}")
+                            logger.warning("discarding malformed frame: {}", e)
                             continue
                         if frame.table not in ("polls", "votes"):
                             continue
+                        logger.debug(
+                            "frame received: {} {} poll {}",
+                            frame.table,
+                            frame.operation,
+                            frame.id,
+                        )
                         self._dirty[frame.id] = time.monotonic()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 if not self._running:
                     break
-                print(f"[PollWS] Disconnected: {e}; reconnect in {backoff}s")
+                logger.info("ws disconnected: {}; reconnect in {}s", e, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, RECONNECT_BACKOFF_MAX)
 
@@ -76,9 +83,10 @@ class PollWebSocketClient:
             expired = [pid for pid, ts in self._dirty.items() if now - ts >= DEBOUNCE_SECONDS]
             for poll_id in expired:
                 del self._dirty[poll_id]
+                logger.debug("debounce expired for poll {}", poll_id)
                 try:
                     await self.on_poll_update(poll_id)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    print(f"[PollWS] Handler error for poll {poll_id}: {e}")
+                    logger.error("ws handler error for poll {}: {}", poll_id, e)
