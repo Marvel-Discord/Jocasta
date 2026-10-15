@@ -2,6 +2,8 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
+
 from cogs.polls import PollsCog
 from funcs.polls_api_models import GuildSettings, Poll, Tag, UserVote
 from tests.conftest import unwrap_command
@@ -114,7 +116,7 @@ async def test_fetch_all_polls_composes_join_shape_and_filters_published():
         return_value=[make_poll_model(id=1), make_poll_model(id=2, published=False)]
     )
     cog.bot.polls_api.get_guild = AsyncMock(return_value=GuildSettings(**make_guild_dict()))
-    cog.bot.polls_api.get_tags = AsyncMock(return_value=[Tag(**make_tag_dict())])
+    cog.bot.polls_api.get_tag = AsyncMock(return_value=Tag(**make_tag_dict()))
 
     published_only = await cog.fetch_all_polls()
     assert [p["id"] for p in published_only] == [1]
@@ -123,6 +125,48 @@ async def test_fetch_all_polls_composes_join_shape_and_filters_published():
     everything = await cog.fetch_all_polls(show_unpublished=True)
     assert [p["id"] for p in everything] == [1, 2]
     cog.bot.polls_api.sync_all_polls.assert_awaited_with(288896937074360321)
+
+
+async def test_fetch_all_polls_uses_embedded_tag_data_with_single_api_call():
+    cog = make_cog()
+    seed_guild_cache(cog, 288896937074360321)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(
+        return_value=[
+            make_poll_model(id=1, tag_data=Tag(**make_tag_dict())),
+            make_poll_model(
+                id=2, published=False, tag_data=Tag(**make_tag_dict(name="movies"))
+            ),
+        ]
+    )
+    cog.bot.polls_api.get_tags = AsyncMock(return_value=[Tag(**make_tag_dict())])
+    cog.bot.polls_api.get_tag = AsyncMock(return_value=Tag(**make_tag_dict()))
+    cog.bot.polls_api.get_guild = AsyncMock()
+
+    polls = await cog.fetch_all_polls(show_unpublished=True)
+
+    assert [p["id"] for p in polls] == [1, 2]
+    assert polls[0]["name"] == "comics"
+    assert polls[1]["name"] == "movies"
+    assert polls[1]["channel_id"] == 200
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(288896937074360321)
+    cog.bot.polls_api.get_tags.assert_not_awaited()
+    cog.bot.polls_api.get_tag.assert_not_awaited()
+    cog.bot.polls_api.get_guild.assert_not_awaited()
+
+
+async def test_fetch_all_polls_falls_back_to_tag_fetch_when_tag_data_missing():
+    cog = make_cog()
+    seed_guild_cache(cog, 288896937074360321)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(
+        return_value=[make_poll_model(id=1), make_poll_model(id=2, tag=2)]
+    )
+    cog.bot.polls_api.get_tag = AsyncMock(return_value=Tag(**make_tag_dict()))
+
+    polls = await cog.fetch_all_polls()
+
+    assert [t[0][0] for t in cog.bot.polls_api.get_tag.await_args_list] == [1, 2]
+    assert polls[0]["name"] == "comics"
+    assert polls[1]["name"] == "comics"
 
 
 def test_polls_guild_id_prefers_guild_ids_attr():
@@ -186,6 +230,50 @@ async def test_fetch_poll_composes_poll_tag_guild():
     assert poll["name"] == "comics"
     assert poll["default_channel_id"] == 300
     cog.bot.polls_api.get_poll.assert_awaited_once_with(42)
+
+
+def seed_guild_cache(cog: PollsCog, guild_id: int) -> dict:
+    guild = make_guild_dict()
+    cog._guild_cache[guild_id] = (guild, discord.utils.utcnow().timestamp())
+    return guild
+
+
+async def test_fetch_poll_uses_embedded_tag_data_with_single_api_call():
+    cog = make_cog()
+    seed_guild_cache(cog, 100)
+    cog.bot.polls_api.get_poll = AsyncMock(
+        return_value=make_poll_model(tag_data=Tag(**make_tag_dict()))
+    )
+    cog.bot.polls_api.get_tag = AsyncMock(return_value=Tag(**make_tag_dict()))
+    cog.bot.polls_api.get_guild = AsyncMock(
+        return_value=GuildSettings(**make_guild_dict())
+    )
+
+    poll = await cog.fetch_poll(42)
+
+    assert poll is not None
+    assert poll["id"] == 42
+    assert poll["name"] == "comics"
+    assert poll["channel_id"] == 200
+    assert poll["default_channel_id"] == 300
+    cog.bot.polls_api.get_poll.assert_awaited_once_with(42)
+    cog.bot.polls_api.get_tag.assert_not_awaited()
+    cog.bot.polls_api.get_guild.assert_not_awaited()
+
+
+async def test_fetch_poll_falls_back_to_tag_fetch_when_tag_data_missing():
+    cog = make_cog()
+    seed_guild_cache(cog, 100)
+    cog.bot.polls_api.get_poll = AsyncMock(return_value=make_poll_model())
+    cog.bot.polls_api.get_tag = AsyncMock(return_value=Tag(**make_tag_dict()))
+    cog.bot.polls_api.get_guild = AsyncMock()
+
+    poll = await cog.fetch_poll(42)
+
+    cog.bot.polls_api.get_tag.assert_awaited_once_with(1)
+    assert poll is not None
+    assert poll["name"] == "comics"
+    cog.bot.polls_api.get_guild.assert_not_awaited()
 
 
 async def test_fetch_guild_info_returns_dict_or_none_on_404():

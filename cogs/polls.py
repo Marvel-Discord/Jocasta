@@ -363,9 +363,17 @@ class PollsCog(commands.Cog, name="Polls"):
         logger.debug("fetching all polls (show unpublished: {})", show_unpublished)
         guild_id = self.polls_guild_id()
         guild = await self.fetch_guild_info(guild_id)
-        tags = {t["tag"]: t for t in await self.fetch_all_tags()}
         polls = await self.bot.polls_api.sync_all_polls(guild_id)
-        out = [self.poll_dict(poll, tags.get(poll.tag), guild) for poll in polls]
+        out = []
+        for poll in polls:
+            if poll.tag_data:
+                tag = poll.tag_data.model_dump()
+            else:
+                logger.debug(
+                    "tag_data missing on poll {} - falling back to tag fetch", poll.id
+                )
+                tag = await self.fetch_tag(poll.tag)
+            out.append(self.poll_dict(poll, tag, guild))
         if not show_unpublished:
             out = [poll for poll in out if poll["published"]]
         logger.debug("fetched {} polls", len(out))
@@ -379,7 +387,13 @@ class PollsCog(commands.Cog, name="Polls"):
                 logger.debug("poll {} not found", poll_id)
                 return None
             raise
-        tag = await self.fetch_tag(poll.tag)
+        if poll.tag_data:
+            tag = poll.tag_data.model_dump()
+        else:
+            logger.debug(
+                "tag_data missing on poll {} - falling back to tag fetch", poll_id
+            )
+            tag = await self.fetch_tag(poll.tag)
         guild = await self.fetch_guild_info(poll.guild_id)
         return self.poll_dict(poll, tag, guild)
 
