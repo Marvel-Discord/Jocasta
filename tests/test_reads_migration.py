@@ -321,13 +321,167 @@ async def test_fetch_all_tags_and_fetch_tags_by_guild_id_filter_client_side():
     assert [t["tag"] for t in await cog.fetch_tags_by_guild_id(100)] == [1]
 
 
-async def test_search_polls_by_id_prefix_filters_over_full_fetch():
+async def test_search_polls_by_id_sends_id_prefix_limit_and_published():
     cog = make_cog()
-    cog.fetch_all_polls = AsyncMock(
-        return_value=[{"id": 12340, "published": True}, {"id": 12399, "published": False}, {"id": 55555, "published": True}]
+    seed_guild_cache(cog, 288896937074360321)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(
+        return_value=[make_poll_model(id=12340, tag_data=Tag(**make_tag_dict()))]
     )
-    assert [p["id"] for p in await cog.search_polls_by_id(123)] == [12340]
-    assert [p["id"] for p in await cog.search_polls_by_id(123, show_unpublished=True)] == [12340, 12399]
+
+    polls = await cog.search_polls_by_id(123)
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(
+        288896937074360321, id_prefix="123", limit=25, published=True
+    )
+    assert [p["id"] for p in polls] == [12340]
+    assert polls[0]["name"] == "comics"
+    assert polls[0]["duration"] == timedelta(days=4)
+
+
+async def test_search_polls_by_id_show_unpublished_drops_published_param():
+    cog = make_cog()
+    seed_guild_cache(cog, 288896937074360321)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(
+        return_value=[
+            make_poll_model(id=12340, tag_data=Tag(**make_tag_dict())),
+            make_poll_model(id=12399, published=False, tag_data=Tag(**make_tag_dict())),
+        ]
+    )
+
+    polls = await cog.search_polls_by_id(123, show_unpublished=True)
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(
+        288896937074360321, id_prefix="123", limit=25
+    )
+    assert [p["id"] for p in polls] == [12340, 12399]
+
+
+async def test_search_polls_by_keyword_sends_search_limit_and_published():
+    cog = make_cog()
+    seed_guild_cache(cog, 288896937074360321)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(
+        return_value=[make_poll_model(id=42, tag_data=Tag(**make_tag_dict()))]
+    )
+
+    polls = await cog.search_polls_by_keyword("thor")
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(
+        288896937074360321, search="thor", limit=25, published=True
+    )
+    assert polls[0]["id"] == 42
+    assert polls[0]["name"] == "comics"
+    assert polls[0]["channel_id"] == 200
+
+
+async def test_search_helpers_forward_variant_filters_for_managers():
+    cog = make_cog()
+    seed_guild_cache(cog, 288896937074360321)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[])
+
+    await cog.search_polls_by_keyword("thor", True, published=False, active=True)
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(
+        288896937074360321, search="thor", limit=25, published=False, active=True
+    )
+
+
+async def test_search_helpers_limit_none_lets_sync_page_everything():
+    cog = make_cog()
+    seed_guild_cache(cog, 288896937074360321)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[])
+
+    await cog.search_polls_by_keyword("thor", limit=None)
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(
+        288896937074360321, search="thor", published=True
+    )
+
+
+def make_search_interaction(*, manager=True, guild_id=100):
+    interaction = MagicMock()
+    interaction.guild_id = guild_id
+    interaction.channel_id = 999
+    interaction.user = MagicMock()
+    interaction.user.roles = [MagicMock(id=302)] if manager else []
+    return interaction
+
+
+async def test_autocomplete_digit_path_sends_id_prefix_with_variant_filters():
+    cog = make_cog()
+    seed_guild_cache(cog, 100)
+    seed_guild_cache(cog, 288896937074360321)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[])
+    cog.bot.polls_api.get_tags = AsyncMock(return_value=[])
+
+    await cog.autocomplete_search_by_poll_id(
+        make_search_interaction(), "42", published=False, active=True
+    )
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(
+        288896937074360321, id_prefix="42", limit=25, published=False, active=True
+    )
+
+
+async def test_autocomplete_keyword_path_sends_search_with_variant_filters():
+    cog = make_cog()
+    seed_guild_cache(cog, 100)
+    seed_guild_cache(cog, 288896937074360321)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[])
+    cog.bot.polls_api.get_tags = AsyncMock(return_value=[])
+
+    await cog.autocomplete_search_by_poll_id(
+        make_search_interaction(manager=False), "thor", published=True
+    )
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(
+        288896937074360321, search="thor", limit=25, published=True
+    )
+
+
+async def test_autocomplete_caps_choices_at_25():
+    cog = make_cog()
+    seed_guild_cache(cog, 100)
+    seed_guild_cache(cog, 288896937074360321)
+    cog.bot.polls_api.sync_all_polls = AsyncMock(
+        return_value=[
+            make_poll_model(id=i, tag_data=Tag(**make_tag_dict())) for i in range(40)
+        ]
+    )
+    cog.bot.polls_api.get_tags = AsyncMock(return_value=[])
+
+    choices = await cog.autocomplete_search_by_poll_id(make_search_interaction(), "1")
+
+    assert len(choices) == 25
+    assert all(c.value in range(40) for c in choices)
+
+
+async def test_command_autocompletes_forward_their_filter_variants():
+    cog = make_cog()
+    cog.autocomplete_search_by_poll_id = AsyncMock(return_value=[])
+    interaction = MagicMock()
+
+    await cog.poll_start_autocomplete_poll_id(interaction, "42")
+    cog.autocomplete_search_by_poll_id.assert_awaited_with(
+        interaction, "42", published=False
+    )
+
+    await cog.poll_end_autocomplete_poll_id(interaction, "42")
+    cog.autocomplete_search_by_poll_id.assert_awaited_with(
+        interaction, "42", active=True
+    )
+
+    await cog.polls_me_autocomplete_poll_id(interaction, "42")
+    cog.autocomplete_search_by_poll_id.assert_awaited_with(
+        interaction, "42", published=True, crosspost=True
+    )
+
+    await cog.poll_delete_autocomplete_poll_id(interaction, "42")
+    cog.autocomplete_search_by_poll_id.assert_awaited_with(interaction, "42")
+
+    await cog.poll_search_autocomplete_poll_id(interaction, "42")
+    cog.autocomplete_search_by_poll_id.assert_awaited_with(
+        interaction, "42", crosspost=True
+    )
 
 
 async def test_has_manager_perms_by_user_and_ids_uses_guild_settings_arrays():
@@ -441,6 +595,26 @@ async def test_polls_me_no_votes_makes_no_wasted_fetches():
 
     cog.bot.polls_api.sync_all_polls.assert_not_awaited()
     assert cog.fetch_guild_id.await_count == 1
+
+
+async def test_poll_search_sends_search_and_filters_server_side():
+    cog = make_cog()
+    unwrap_command(cog, "poll_search")
+    cog.bot.polls_api.sync_all_polls = AsyncMock(return_value=[])
+    cog.fetch_tag = AsyncMock(return_value=make_tag_dict())
+    cog.fetch_guild_id = AsyncMock(return_value=100)
+    cog.can_view = AsyncMock(return_value=True)
+    cog.has_manager_perms = AsyncMock(return_value=[100])
+
+    interaction = make_interaction()
+    await cog.poll_search(
+        interaction, keyword="thor", tag="1", published=False, active=True
+    )
+
+    cog.bot.polls_api.sync_all_polls.assert_awaited_once_with(
+        100, tag=1, search="thor", published=False, active=True
+    )
+    interaction.followup.send.assert_awaited_with("No results found!")
 
 
 async def test_admin_sync_skips_update_votes_task():
