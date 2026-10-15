@@ -1,4 +1,5 @@
 """Tests for the read-path migration from postgres to the polls API."""
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -274,6 +275,95 @@ async def test_fetch_poll_falls_back_to_tag_fetch_when_tag_data_missing():
     assert poll is not None
     assert poll["name"] == "comics"
     cog.bot.polls_api.get_guild.assert_not_awaited()
+
+
+async def test_handle_poll_event_update_flow_uses_embedded_tag_without_tag_fetches(
+    monkeypatch,
+):
+    """The vote/update hot path: handle_poll_event -> update_poll_message
+    -> loop_update_poll_message -> do_update_poll_message -> re-render.
+    With a fully-merged poll dict the tag never comes from the API."""
+    cog = make_cog()
+    cog._home_guild_ids = [100]
+    seed_guild_cache(cog, 100)
+    cog.bot.polls_api.get_poll = AsyncMock(
+        return_value=make_poll_model(tag_data=Tag(**make_tag_dict()))
+    )
+    cog.bot.polls_api.get_tag = AsyncMock(return_value=Tag(**make_tag_dict()))
+    cog.bot.polls_api.get_guild = AsyncMock()
+
+    cog.bot.update_msg_lock = asyncio.Lock()
+    cog.bot.update_msg_flags = {}
+
+    class TaskCaptureLoop:
+        def __init__(self):
+            self.tasks = []
+
+        def create_task(self, coro):
+            task = asyncio.ensure_future(coro)
+            self.tasks.append(task)
+            return task
+
+    capture_loop = TaskCaptureLoop()
+    cog.bot.loop = capture_loop
+
+    msg = MagicMock(content=None, embeds=[], author=MagicMock(id=1))
+    channel = MagicMock()
+    channel.fetch_message = AsyncMock(return_value=msg)
+    cog.bot.get_channel = MagicMock(return_value=channel)
+    cog.bot.user = MagicMock(id=2)
+
+    real_sleep = asyncio.sleep
+
+    async def fast_sleep(delay=None, result=None):
+        await real_sleep(0)
+
+    monkeypatch.setattr("cogs.polls.asyncio.sleep", fast_sleep)
+
+    await cog.handle_poll_event(42)
+
+    assert capture_loop.tasks
+    await asyncio.gather(*capture_loop.tasks)
+
+    cog.bot.polls_api.get_tag.assert_not_awaited()
+    cog.bot.polls_api.get_guild.assert_not_awaited()
+    assert cog.bot.polls_api.get_poll.await_count == 3
+    assert cog.bot.update_msg_flags == {}
+
+
+async def test_split_start_polls_uses_embedded_tag_without_tag_fetches():
+    cog = make_cog()
+    seed_guild_cache(cog, 100)
+    cog.bot.polls_api.get_poll = AsyncMock(
+        return_value=make_poll_model(tag_data=Tag(**make_tag_dict()))
+    )
+    cog.bot.polls_api.get_tag = AsyncMock(return_value=Tag(**make_tag_dict()))
+    cog.bot.polls_api.get_guild = AsyncMock()
+    cog.start_polls = AsyncMock()
+
+    assert await cog.split_start_polls(42) is True
+
+    cog.bot.polls_api.get_poll.assert_awaited_once_with(42)
+    cog.bot.polls_api.get_tag.assert_not_awaited()
+    cog.start_polls.assert_awaited_once_with([42])
+
+
+async def test_finalize_ended_poll_uses_embedded_tag_without_tag_fetches():
+    cog = make_cog()
+    guild = seed_guild_cache(cog, 100)
+    merged = cog.poll_dict(make_poll_model(active=False), make_tag_dict(), guild)
+    cog.bot.polls_api.get_tag = AsyncMock(return_value=Tag(**make_tag_dict()))
+    cog.bot.polls_api.get_guild = AsyncMock()
+    cog.bot.get_channel = MagicMock(return_value=MagicMock())
+    cog.bot.get_guild = MagicMock(
+        return_value=MagicMock(get_channel_or_thread=MagicMock(return_value=None))
+    )
+    cog.update_poll_message = AsyncMock()
+
+    await cog.finalize_ended_poll(merged)
+
+    cog.bot.polls_api.get_tag.assert_not_awaited()
+    cog.update_poll_message.assert_awaited_once_with(merged)
 
 
 async def test_fetch_guild_info_returns_dict_or_none_on_404():

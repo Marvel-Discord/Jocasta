@@ -244,6 +244,7 @@ async def test_start_polls_publishes_after_sending_with_collected_ids():
     cog.bot.polls_api.publish_poll.assert_awaited_once_with(42, 7001, [7002])
     main_channel.send.assert_awaited_once()
     crosspost_channel.send.assert_awaited_once()
+    cog.fetch_tag.assert_awaited_once_with(1)
     assert final is not None
     assert len(final) == 2
     assert final[0][0]["id"] == 42 and final[1][0]["id"] == 42
@@ -444,3 +445,4 @@ async def test_do_update_poll_message_fetches_without_vote_recompute():
     await cog.do_update_poll_message(poll_dict)
 
     cog.fetch_poll.assert_awaited_with(42)
+    cog.fetch_tag.assert_awaited_once_with(1)

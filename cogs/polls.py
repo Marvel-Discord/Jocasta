@@ -383,6 +383,13 @@ class PollsCog(commands.Cog, name="Polls"):
             d.update(guild)
         return d
 
+    def tag_from_poll(self, poll: dict[str, Any]) -> dict[str, Any] | None:
+        """The tag fields flattened into a merged poll dict (poll_dict's
+        d.update(tag)), or None when the dict carries no tag fields (caller
+        falls back to fetch_tag — mixed-version tolerance). "name" is the
+        signal: Tag always carries it, Poll and GuildSettings never do."""
+        return poll if "name" in poll else None
+
     async def map_polls_with_tags(
         self, polls: list[Poll], guild: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
@@ -710,7 +717,7 @@ class PollsCog(commands.Cog, name="Polls"):
         if not guild:
             guild = await self.fetch_guild_info(poll["guild_id"])
         if not tag:
-            tag = await self.fetch_tag(poll["tag"])
+            tag = self.tag_from_poll(poll) or await self.fetch_tag(poll["tag"])
 
         if show_extra and interaction is None:
             show_extra = False
@@ -1347,7 +1354,7 @@ class PollsCog(commands.Cog, name="Polls"):
             poll = await self.fetch_poll(poll_id)
             if poll is None:
                 continue
-            tag = await self.fetch_tag(poll["tag"])
+            tag = self.tag_from_poll(poll) or await self.fetch_tag(poll["tag"])
             tid = None if not tag else tag["tag"]
             if tid in polls.keys():
                 polls[tid].append(poll_id)
@@ -1394,7 +1401,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 poll = await self.fetch_poll(poll_id)
                 if poll is None:
                     continue
-                tag = await self.fetch_tag(poll["tag"])
+                tag = self.tag_from_poll(poll) or await self.fetch_tag(poll["tag"])
                 polls.append([poll, tag])
 
             tags = [tag["tag"] if tag else None for poll, tag in polls]
@@ -1587,7 +1594,7 @@ class PollsCog(commands.Cog, name="Polls"):
         poll's threads (Discord's archived state is the marker — a
         repeat call is a no-op) and re-render the final message."""
         logger.debug("finalizing ended poll {}", poll["id"])
-        tag = await self.fetch_tag(poll["tag"])
+        tag = self.tag_from_poll(poll) or await self.fetch_tag(poll["tag"])
         guild = await self.fetch_guild_info(poll["guild_id"])
         if guild is None:
             logger.error(
@@ -1671,7 +1678,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     async def do_update_poll_message(self, poll: dict[str, Any], force: bool = False):
         logger.debug("updating message for poll {}", poll["id"])
-        tag = await self.fetch_tag(poll["tag"])
+        tag = self.tag_from_poll(poll) or await self.fetch_tag(poll["tag"])
 
         crossposts = (
             [self.bot.get_channel(i) for i in tag["crosspost_channels"]] if tag else []
