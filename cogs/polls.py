@@ -174,6 +174,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     END_WATERMARK_KEY = "polls:end_watermark"
     END_WATERMARK_DEFAULT_SECONDS = 24 * 60 * 60
+    GUILD_CACHE_TTL = 300
 
     def __init__(self, bot):
         self.bot = bot
@@ -183,6 +184,7 @@ class PollsCog(commands.Cog, name="Polls"):
         if not hasattr(self.bot, "rendering_polls"):
             self.bot.rendering_polls: set[int] = set()
         self._end_watermark_fallback: _dt.datetime | None = None
+        self._guild_cache: dict[int, tuple[dict[str, Any], float]] = {}
 
         self.bot.update_msg_lock = asyncio.Lock()
         self.bot.update_msg_flags = {}
@@ -389,6 +391,11 @@ class PollsCog(commands.Cog, name="Polls"):
         return msg
 
     async def fetch_guild_info(self, guild_id: int) -> dict[str, Any] | None:
+        now = discord.utils.utcnow().timestamp()
+        cached = self._guild_cache.get(guild_id)
+        if cached is not None and now - cached[1] < self.GUILD_CACHE_TTL:
+            logger.debug("guild info {} served from cache", guild_id)
+            return cached[0]
         try:
             guild = await self.bot.polls_api.get_guild(guild_id)
         except PollsAPIError as e:
@@ -396,7 +403,10 @@ class PollsCog(commands.Cog, name="Polls"):
                 logger.debug("guild info {} not found", guild_id)
                 return None
             raise
-        return guild.model_dump()
+        info = guild.model_dump()
+        self._guild_cache[guild_id] = (info, discord.utils.utcnow().timestamp())
+        logger.debug("refetched guild info {}", guild_id)
+        return info
 
     async def fetch_guild_info_by_manage_channel(
         self, channel_id: int
@@ -3687,6 +3697,8 @@ class PollsCog(commands.Cog, name="Polls"):
         tag: str | None = None,
     ):
         """Force sync all automated poll routines"""
+        logger.debug("clearing guild settings cache for admin sync")
+        self._guild_cache.clear()
         await interaction.response.defer()
 
         if tag:

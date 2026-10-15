@@ -194,6 +194,7 @@ async def test_fetch_guild_info_returns_dict_or_none_on_404():
     guild = await cog.fetch_guild_info(100)
     assert guild is not None
     assert guild["default_channel_id"] == 300
+    cog = make_cog()
     cog.bot.polls_api.get_guild = AsyncMock(side_effect=PollsAPIError(404, "nope"))
     assert await cog.fetch_guild_info(100) is None
 
@@ -247,6 +248,7 @@ async def test_has_manager_perms_by_user_and_ids_uses_guild_settings_arrays():
     user = MagicMock()
     user.roles = [MagicMock(id=302)]
     assert await cog.has_manager_perms_by_user_and_ids(user, 100, channel_id=301) == [100]
+    cog = make_cog()
     cog.bot.polls_api.get_guild = AsyncMock(return_value=GuildSettings(**make_guild_dict(manager_role_id=[999])))
     assert await cog.has_manager_perms_by_user_and_ids(user, 100, channel_id=999) == []
 
