@@ -175,6 +175,7 @@ class PollsCog(commands.Cog, name="Polls"):
     END_WATERMARK_KEY = "polls:end_watermark"
     END_WATERMARK_DEFAULT_SECONDS = 24 * 60 * 60
     GUILD_CACHE_TTL = 300
+    TAG_CACHE_TTL = 300
 
     def __init__(self, bot):
         self.bot = bot
@@ -185,6 +186,9 @@ class PollsCog(commands.Cog, name="Polls"):
             self.bot.rendering_polls: set[int] = set()
         self._end_watermark_fallback: _dt.datetime | None = None
         self._guild_cache: dict[int, tuple[dict[str, Any], float]] = {}
+        self._tag_cache: dict[
+            tuple[tuple[str, Any], ...], tuple[list[dict[str, Any]], float]
+        ] = {}
 
         self.bot.update_msg_lock = asyncio.Lock()
         self.bot.update_msg_flags = {}
@@ -488,8 +492,24 @@ class PollsCog(commands.Cog, name="Polls"):
         return [tag for tag in tags if tag["guild_id"] == guild_id]
 
     async def fetch_all_tags(self, **params) -> list[dict[str, Any]]:
+        """Fetch the tag list through a five-minute TTL cache.
+
+        Entries are keyed by the frozen request params so distinct filter
+        combos stay isolated. An empty list is cached: get_tags returns a
+        list (never 404s), so an empty tag list is valid state rather than
+        a miss. API errors raise through uncached.
+        """
+        key = tuple(sorted(params.items()))
+        now = discord.utils.utcnow().timestamp()
+        cached = self._tag_cache.get(key)
+        if cached is not None and now - cached[1] < self.TAG_CACHE_TTL:
+            logger.debug("tag list served from cache ({})", params)
+            return cached[0]
         tags = await self.bot.polls_api.get_tags(**params)
-        return [tag.model_dump() for tag in tags]
+        out = [tag.model_dump() for tag in tags]
+        self._tag_cache[key] = (out, discord.utils.utcnow().timestamp())
+        logger.debug("refetched tag list ({})", params)
+        return out
 
     async def tagname(self, tag_id: int) -> str:
         tag = await self.fetch_tag(tag_id)
@@ -3758,6 +3778,8 @@ class PollsCog(commands.Cog, name="Polls"):
         """Force sync all automated poll routines"""
         logger.debug("clearing guild settings cache for admin sync")
         self._guild_cache.clear()
+        logger.debug("clearing tag list cache for admin sync")
+        self._tag_cache.clear()
         await interaction.response.defer()
 
         if tag:

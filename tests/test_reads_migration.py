@@ -405,6 +405,9 @@ async def test_fetch_all_tags_and_fetch_tags_by_guild_id_filter_client_side():
         return_value=[Tag(**make_tag_dict()), Tag(**make_tag_dict(tag=2, guild_id=100))]
     )
     assert len(await cog.fetch_all_tags()) == 2
+    # the tag list is now TTL-cached (see tests/test_tag_cache.py); drop the
+    # cached entry so the swapped mock below is actually fetched
+    cog._tag_cache.clear()
     cog.bot.polls_api.get_tags = AsyncMock(
         return_value=[Tag(**make_tag_dict()), Tag(**make_tag_dict(tag=2, guild_id=777))]
     )
