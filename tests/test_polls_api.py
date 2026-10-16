@@ -438,6 +438,24 @@ async def test_sync_all_polls_stops_on_empty_page():
     assert await client.sync_all_polls(100) == []
 
 
+async def test_sync_all_polls_limit_kwarg_flows_as_query_param_and_stops_early():
+    seen = []
+
+    async def handler(request):
+        seen.append(dict(request.url.params))
+        return httpx2.Response(
+            200,
+            json={"data": [poll_payload(id=i) for i in range(25)], "meta": {"total": 80, "page": 1, "limit": 25}},
+        )
+
+    client = make_client(handler)
+    polls = await client.sync_all_polls(100, id_prefix="12", limit=25)
+    assert len(polls) == 25
+    assert len(seen) == 1
+    assert seen[0]["limit"] == "25"
+    assert seen[0]["id_prefix"] == "12"
+
+
 async def test_set_tag_end_message_latest_ids_posts_and_returns_tag():
     seen = {}
 

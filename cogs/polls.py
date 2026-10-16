@@ -174,6 +174,8 @@ class PollsCog(commands.Cog, name="Polls"):
 
     END_WATERMARK_KEY = "polls:end_watermark"
     END_WATERMARK_DEFAULT_SECONDS = 24 * 60 * 60
+    GUILD_CACHE_TTL = 300
+    TAG_CACHE_TTL = 300
 
     def __init__(self, bot):
         self.bot = bot
@@ -183,6 +185,10 @@ class PollsCog(commands.Cog, name="Polls"):
         if not hasattr(self.bot, "rendering_polls"):
             self.bot.rendering_polls: set[int] = set()
         self._end_watermark_fallback: _dt.datetime | None = None
+        self._guild_cache: dict[int, tuple[dict[str, Any], float]] = {}
+        self._tag_cache: dict[
+            tuple[tuple[str, Any], ...], tuple[list[dict[str, Any]], float]
+        ] = {}
 
         self.bot.update_msg_lock = asyncio.Lock()
         self.bot.update_msg_flags = {}
@@ -290,38 +296,64 @@ class PollsCog(commands.Cog, name="Polls"):
         return x + y
 
     async def search_polls_by_id(
-        self, poll_id: int, show_unpublished: bool = False
+        self,
+        poll_id: int,
+        show_unpublished: bool = False,
+        *,
+        published: bool | None = None,
+        active: bool | None = None,
+        limit: int | None = 25,
     ) -> list[dict[str, Any]]:
-        polls = await self.fetch_all_polls(show_unpublished=show_unpublished)
-        if not show_unpublished:
-            polls = [poll for poll in polls if poll["published"]]
-        prefix = str(poll_id)
-        return [poll for poll in polls if str(poll["id"]).startswith(prefix)]
+        return await self.search_polls_params(
+            {"id_prefix": str(poll_id)},
+            show_unpublished,
+            published=published,
+            active=active,
+            limit=limit,
+        )
 
     async def search_polls_by_keyword(
-        self, keyword: str, show_unpublished: bool = False
+        self,
+        keyword: str,
+        show_unpublished: bool = False,
+        *,
+        published: bool | None = None,
+        active: bool | None = None,
+        limit: int | None = 25,
     ) -> list[dict[str, Any]]:
-        results = await self.fetch_all_polls(show_unpublished=show_unpublished)
+        return await self.search_polls_params(
+            {"search": keyword},
+            show_unpublished,
+            published=published,
+            active=active,
+            limit=limit,
+        )
 
-        return self.keyword_search(keyword, results)
-
-    def keyword_search(
-        self, keyword: str, polls: list[dict[str, Any]]
+    async def search_polls_params(
+        self,
+        params: dict[str, Any],
+        show_unpublished: bool,
+        *,
+        published: bool | None = None,
+        active: bool | None = None,
+        limit: int | None = 25,
     ) -> list[dict[str, Any]]:
-        alphanumeric = lambda x: re.sub(r"[\W_]+", "", x.lower())
-        lowered = alphanumeric(keyword)
-        return [
-            i
-            for i in polls
-            if (
-                any(
-                    lowered in alphanumeric(i[j])
-                    for j in ["question", "thread_question", "description"]
-                    if isinstance(i[j], str)
-                )
-                or any(lowered in alphanumeric(j) for j in i["choices"])
-            )
-        ]
+        """Server-side search shared by the id-prefix and keyword helpers.
+
+        Non-managers (show_unpublished=False) always get published=True sent;
+        managers get their published/active autocomplete variant sent instead."""
+        if limit is not None:
+            params["limit"] = limit
+        if not show_unpublished:
+            params["published"] = True
+        elif published is not None:
+            params["published"] = published
+        if active is not None:
+            params["active"] = active
+        guild_id = self.polls_guild_id()
+        guild = await self.fetch_guild_info(guild_id)
+        polls = await self.bot.polls_api.sync_all_polls(guild_id, **params)
+        return await self.map_polls_with_tags(polls, guild=guild)
 
     def search_matches(self, poll: Poll, tag, published, active, notag) -> bool:
         if tag == int(notag) and poll.tag is not None:
@@ -355,15 +387,36 @@ class PollsCog(commands.Cog, name="Polls"):
             d.update(guild)
         return d
 
+    def tag_from_poll(self, poll: dict[str, Any]) -> dict[str, Any] | None:
+        """The tag fields flattened into a merged poll dict (poll_dict's
+        d.update(tag)), or None when the dict carries no tag fields (caller
+        falls back to fetch_tag — mixed-version tolerance). "name" is the
+        signal: Tag always carries it, Poll and GuildSettings never do."""
+        return poll if "name" in poll else None
+
+    async def map_polls_with_tags(
+        self, polls: list[Poll], guild: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        out = []
+        for poll in polls:
+            if poll.tag_data:
+                tag = poll.tag_data.model_dump()
+            else:
+                logger.debug(
+                    "tag_data missing on poll {} - falling back to tag fetch", poll.id
+                )
+                tag = await self.fetch_tag(poll.tag)
+            out.append(self.poll_dict(poll, tag, guild))
+        return out
+
     async def fetch_all_polls(
         self, show_unpublished: bool = False
     ) -> list[dict[str, Any]]:
         logger.debug("fetching all polls (show unpublished: {})", show_unpublished)
         guild_id = self.polls_guild_id()
         guild = await self.fetch_guild_info(guild_id)
-        tags = {t["tag"]: t for t in await self.fetch_all_tags()}
         polls = await self.bot.polls_api.sync_all_polls(guild_id)
-        out = [self.poll_dict(poll, tags.get(poll.tag), guild) for poll in polls]
+        out = await self.map_polls_with_tags(polls, guild=guild)
         if not show_unpublished:
             out = [poll for poll in out if poll["published"]]
         logger.debug("fetched {} polls", len(out))
@@ -377,7 +430,13 @@ class PollsCog(commands.Cog, name="Polls"):
                 logger.debug("poll {} not found", poll_id)
                 return None
             raise
-        tag = await self.fetch_tag(poll.tag)
+        if poll.tag_data:
+            tag = poll.tag_data.model_dump()
+        else:
+            logger.debug(
+                "tag_data missing on poll {} - falling back to tag fetch", poll_id
+            )
+            tag = await self.fetch_tag(poll.tag)
         guild = await self.fetch_guild_info(poll.guild_id)
         return self.poll_dict(poll, tag, guild)
 
@@ -389,6 +448,11 @@ class PollsCog(commands.Cog, name="Polls"):
         return msg
 
     async def fetch_guild_info(self, guild_id: int) -> dict[str, Any] | None:
+        now = discord.utils.utcnow().timestamp()
+        cached = self._guild_cache.get(guild_id)
+        if cached is not None and now - cached[1] < self.GUILD_CACHE_TTL:
+            logger.debug("guild info {} served from cache", guild_id)
+            return cached[0]
         try:
             guild = await self.bot.polls_api.get_guild(guild_id)
         except PollsAPIError as e:
@@ -396,7 +460,10 @@ class PollsCog(commands.Cog, name="Polls"):
                 logger.debug("guild info {} not found", guild_id)
                 return None
             raise
-        return guild.model_dump()
+        info = guild.model_dump()
+        self._guild_cache[guild_id] = (info, discord.utils.utcnow().timestamp())
+        logger.debug("refetched guild info {}", guild_id)
+        return info
 
     async def fetch_guild_info_by_manage_channel(
         self, channel_id: int
@@ -425,8 +492,24 @@ class PollsCog(commands.Cog, name="Polls"):
         return [tag for tag in tags if tag["guild_id"] == guild_id]
 
     async def fetch_all_tags(self, **params) -> list[dict[str, Any]]:
+        """Fetch the tag list through a five-minute TTL cache.
+
+        Entries are keyed by the frozen request params so distinct filter
+        combos stay isolated. An empty list is cached: get_tags returns a
+        list (never 404s), so an empty tag list is valid state rather than
+        a miss. API errors raise through uncached.
+        """
+        key = tuple(sorted(params.items()))
+        now = discord.utils.utcnow().timestamp()
+        cached = self._tag_cache.get(key)
+        if cached is not None and now - cached[1] < self.TAG_CACHE_TTL:
+            logger.debug("tag list served from cache ({})", params)
+            return cached[0]
         tags = await self.bot.polls_api.get_tags(**params)
-        return [tag.model_dump() for tag in tags]
+        out = [tag.model_dump() for tag in tags]
+        self._tag_cache[key] = (out, discord.utils.utcnow().timestamp())
+        logger.debug("refetched tag list ({})", params)
+        return out
 
     async def tagname(self, tag_id: int) -> str:
         tag = await self.fetch_tag(tag_id)
@@ -654,7 +737,7 @@ class PollsCog(commands.Cog, name="Polls"):
         if not guild:
             guild = await self.fetch_guild_info(poll["guild_id"])
         if not tag:
-            tag = await self.fetch_tag(poll["tag"])
+            tag = self.tag_from_poll(poll) or await self.fetch_tag(poll["tag"])
 
         if show_extra and interaction is None:
             show_extra = False
@@ -933,7 +1016,8 @@ class PollsCog(commands.Cog, name="Polls"):
             tags = await self.fetch_tags_by_guild_id(interaction.guild_id)
         else:
             tags = await self.fetch_all_tags()
-        tags.sort(key=lambda x: x["name"])
+        # sorted() not .sort(): the cached list is shared across callers
+        tags = sorted(tags, key=lambda x: x["name"])
         tag_choices = [
             app_commands.Choice(name=t["name"], value=str(t["tag"]))
             for t in tags
@@ -960,14 +1044,20 @@ class PollsCog(commands.Cog, name="Polls"):
             poll_id = int(current)
             if poll_id <= 99999:
                 results = await self.search_polls_by_id(
-                    poll_id, bool(await self.has_manager_perms(interaction))
+                    poll_id,
+                    bool(await self.has_manager_perms(interaction)),
+                    published=published,
+                    active=active,
                 )
                 results = self.sort_polls(results)
             else:
                 results = []
         else:
             results = await self.search_polls_by_keyword(
-                current, bool(await self.has_manager_perms(interaction))
+                current,
+                bool(await self.has_manager_perms(interaction)),
+                published=published,
+                active=active,
             )
             lowered = current.lower()
             regex = [f"^\b{lowered}\b", f"\b{lowered}\b", f"^{lowered}", lowered, ""]
@@ -1285,7 +1375,7 @@ class PollsCog(commands.Cog, name="Polls"):
             poll = await self.fetch_poll(poll_id)
             if poll is None:
                 continue
-            tag = await self.fetch_tag(poll["tag"])
+            tag = self.tag_from_poll(poll) or await self.fetch_tag(poll["tag"])
             tid = None if not tag else tag["tag"]
             if tid in polls.keys():
                 polls[tid].append(poll_id)
@@ -1332,7 +1422,7 @@ class PollsCog(commands.Cog, name="Polls"):
                 poll = await self.fetch_poll(poll_id)
                 if poll is None:
                     continue
-                tag = await self.fetch_tag(poll["tag"])
+                tag = self.tag_from_poll(poll) or await self.fetch_tag(poll["tag"])
                 polls.append([poll, tag])
 
             tags = [tag["tag"] if tag else None for poll, tag in polls]
@@ -1525,7 +1615,7 @@ class PollsCog(commands.Cog, name="Polls"):
         poll's threads (Discord's archived state is the marker — a
         repeat call is a no-op) and re-render the final message."""
         logger.debug("finalizing ended poll {}", poll["id"])
-        tag = await self.fetch_tag(poll["tag"])
+        tag = self.tag_from_poll(poll) or await self.fetch_tag(poll["tag"])
         guild = await self.fetch_guild_info(poll["guild_id"])
         if guild is None:
             logger.error(
@@ -1609,7 +1699,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
     async def do_update_poll_message(self, poll: dict[str, Any], force: bool = False):
         logger.debug("updating message for poll {}", poll["id"])
-        tag = await self.fetch_tag(poll["tag"])
+        tag = self.tag_from_poll(poll) or await self.fetch_tag(poll["tag"])
 
         crossposts = (
             [self.bot.get_channel(i) for i in tag["crosspost_channels"]] if tag else []
@@ -3271,6 +3361,7 @@ class PollsCog(commands.Cog, name="Polls"):
             params = {}
             text = []
             if keyword:
+                params["search"] = keyword
                 text.append(f"Keyword search: `{keyword}`")
             if tag:
                 if tag != int(notag):
@@ -3279,8 +3370,10 @@ class PollsCog(commands.Cog, name="Polls"):
                 else:
                     text.append(f"Tag: None")
             if published is not None:
+                params["published"] = published
                 text.append(f"Published? `{published}`")
             if active is not None:
+                params["active"] = active
                 text.append(f"Active? `{active}`")
             if sort_order:
                 text.append(f"Sorted by `{sort_order.name}`")
@@ -3293,9 +3386,6 @@ class PollsCog(commands.Cog, name="Polls"):
                 for p in polls
                 if self.search_matches(p, tag, published, active, notag)
             ]
-
-            if keyword:
-                polls = self.keyword_search(keyword, polls)
 
             polls = [i for i in polls if await self.can_view(i, interaction.guild_id)]
             if not await self.has_manager_perms(interaction):
@@ -3687,6 +3777,10 @@ class PollsCog(commands.Cog, name="Polls"):
         tag: str | None = None,
     ):
         """Force sync all automated poll routines"""
+        logger.debug("clearing guild settings cache for admin sync")
+        self._guild_cache.clear()
+        logger.debug("clearing tag list cache for admin sync")
+        self._tag_cache.clear()
         await interaction.response.defer()
 
         if tag:
@@ -3738,8 +3832,7 @@ class PollsCog(commands.Cog, name="Polls"):
 
         msg = await interaction.followup.send(generate_txt(), wait=True)
 
-        refresh_polls = lambda: self.search_polls_by_keyword("")
-        polls = await refresh_polls()
+        polls = await self.fetch_all_polls(show_unpublished=False)
 
         await task(self.process_pending_renders, "pending_renders")
 

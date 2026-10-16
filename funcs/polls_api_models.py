@@ -3,30 +3,6 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
-class Poll(BaseModel):
-    id: int
-    question: str
-    published: bool
-    active: bool
-    guild_id: int
-    choices: list[str]
-    votes: list[int]
-    total_votes: int
-    start_time: datetime | None
-    end_time: datetime | None
-    num: int | None
-    message_id: int | None
-    crosspost_message_ids: list[int]
-    tag: int
-    image: str | None
-    description: str | None
-    thread_question: str | None
-    show_question: bool
-    show_options: bool
-    show_voting: bool
-    fallback: bool
-
-
 class Tag(BaseModel):
     tag: int
     name: str
@@ -43,6 +19,31 @@ class Tag(BaseModel):
     end_message_ping: bool
     end_message_self_assign: bool
     persistent: bool
+
+
+class Poll(BaseModel):
+    id: int
+    question: str
+    published: bool
+    active: bool
+    guild_id: int
+    choices: list[str]
+    votes: list[int]
+    total_votes: int
+    start_time: datetime | None
+    end_time: datetime | None
+    num: int | None
+    message_id: int | None
+    crosspost_message_ids: list[int]
+    tag: int
+    tag_data: Tag | None = None
+    image: str | None
+    description: str | None
+    thread_question: str | None
+    show_question: bool
+    show_options: bool
+    show_voting: bool
+    fallback: bool
 
 
 class GuildSettings(BaseModel):

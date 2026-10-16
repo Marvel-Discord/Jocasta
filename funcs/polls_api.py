@@ -138,13 +138,17 @@ class PollsAPIClient:
         return PollListResponse.model_validate(response.json())
 
     async def sync_all_polls(self, guild_id: int, **params) -> list[Poll]:
+        limit = params.pop("limit", None)
+        page_size = limit if limit is not None else 100
         polls: list[Poll] = []
         page = 1
         while True:
-            response = await self.sync_polls(guildId=guild_id, page=page, limit=100, **params)
+            response = await self.sync_polls(guildId=guild_id, page=page, limit=page_size, **params)
             polls.extend(response.data)
             if not response.data or len(polls) >= response.meta.get("total", 0):
                 return polls
+            if limit is not None and len(polls) >= limit:
+                return polls[:limit]
             page += 1
 
     async def get_tags(self, **params) -> list[Tag]:
