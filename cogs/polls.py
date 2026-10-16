@@ -1016,7 +1016,8 @@ class PollsCog(commands.Cog, name="Polls"):
             tags = await self.fetch_tags_by_guild_id(interaction.guild_id)
         else:
             tags = await self.fetch_all_tags()
-        tags.sort(key=lambda x: x["name"])
+        # sorted() not .sort(): the cached list is shared across callers
+        tags = sorted(tags, key=lambda x: x["name"])
         tag_choices = [
             app_commands.Choice(name=t["name"], value=str(t["tag"]))
             for t in tags
